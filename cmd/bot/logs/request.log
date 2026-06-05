@@ -1,0 +1,5 @@
+{"level":"info","time":1773792982.43315,"msg":"update handled","handler":"startHandler","user_id":1195336774,"first_name":"omid","latency":0.102059458}
+{"level":"info","time":1773792987.23438,"msg":"update handled","handler":"chatHandler","user_id":1195336774,"first_name":"omid","latency":0.071909375}
+{"level":"info","time":1773792989.131126,"msg":"update handled","handler":"helpHandler","user_id":1195336774,"first_name":"omid","latency":0.207476333}
+{"level":"info","time":1773792990.2536042,"msg":"update handled","handler":"startHandler","user_id":1195336774,"first_name":"omid","latency":0.071304541}
+{"level":"info","time":1773792992.505536,"msg":"update handled","handler":"showGamesHandler","user_id":1195336774,"first_name":"omid","latency":0.106076792}
