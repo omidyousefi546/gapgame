@@ -300,28 +300,6 @@ func (h *Handler) ChatRequestHandler(c tele.Context) error {
 	return c.Send("✅ درخواست چت ارسال شد.")
 }
 
-// func (h *Handler) AddContactHandler(c tele.Context) error {
-
-// 	u, _, err := h.users.GetOrCreate(c.Sender().ID)
-
-// 	if err != nil {
-
-// 		return c.Send("❌ خطا", MainMenuKeyboard())
-// 	}
-
-// 	targetIDstring := c.Data()
-// 	targetID, err := strconv.ParseInt(targetIDstring, 10, 64)
-
-// 	if err := h.users.AddContact(u.TelegramID, targetID); err != nil {
-
-// 		return c.Respond(&tele.CallbackResponse{Text: "❌ خطا در افزودن مخاطب"})
-// 	}
-
-// 	return c.Respond(&tele.CallbackResponse{Text: "✅ به مخاطبین اضافه شد"})
-
-// }
-
-// TODO:
 func (h *Handler) ReportHandler(c tele.Context) error {
 
 	u, _, err := h.users.GetOrCreate(c.Sender().ID)
@@ -386,19 +364,6 @@ func (h *Handler) BackToEditProfileHandler(c tele.Context) error {
 
 	return c.Reply(msg, MainMenuKeyboard(), tele.ModeHTML)
 }
-
-// c.Respond()
-
-// switch c.Callback().Unique {
-// case "btnBackToEditProfile":
-// 	return c.EditCaption(c.Callback().Message.Caption,
-// 		EditProfileKeyboard())
-
-// // c.Edit("✏️ کدام بخش را ویرایش کنید؟", EditProfileKeyboard())
-// default:
-// 	return c.Send("✏️ کدام بخش را ویرایش کنید؟", EditProfileKeyboard())
-
-// }
 
 func (h *Handler) EditNameHandler(c tele.Context) error {
 	u, _, err := h.users.GetOrCreate(c.Sender().ID)
@@ -804,15 +769,16 @@ func (h *Handler) MyLikesHandler(c tele.Context) error {
 		return c.Send("❌ خطا", MainMenuKeyboard())
 	}
 
-	if c.Callback() != nil {
-		c.Respond()
-	}
-
 	msg, kb, err := h.buildLikesMessage(u, 1)
 	if err != nil {
 		return c.Send("❌ خطا در دریافت لیست", MainMenuKeyboard())
 	}
 
+	// If invoked via an inline callback, edit the existing message in place.
+	if c.Callback() != nil {
+		c.Respond()
+		return c.Edit(msg, kb)
+	}
 	return c.Send(msg, kb)
 }
 
@@ -898,11 +864,15 @@ func (h *Handler) SilentHandler(c tele.Context) error {
 	if u.SilentUntil != nil && !u.SilentUntil.Equal(ForeverSilent) &&
 		time.Now().After(*u.SilentUntil) {
 		u.SilentUntil = nil
-		h.users.Save(u)
+		if err := h.users.Save(u); err != nil {
+			h.log.Error("failed to clear expired silent state", zap.Error(err))
+		}
 	}
 
-	c.Respond()
-
+	if c.Callback() != nil {
+		c.Respond()
+		return c.Edit(silentStatusMessage(u), SilentKeyboard(u))
+	}
 	return c.Send(silentStatusMessage(u), SilentKeyboard(u))
 }
 
@@ -1015,9 +985,14 @@ func (h *Handler) RemoveContactHandler(c tele.Context) error {
 	return c.Edit("با موفقیت از لیست مخاطبین حذف شد.")
 }
 
-// مشاهده لیست مخاطبین - صفحه اول
+// مشاهده لیست مخاطبین - صفحه اول.
+// Triggered by an inline-keyboard callback, so we edit the existing message
+// instead of sending a new one (falls back to send for non-callback callers).
 func (h *Handler) MyContactsHandler(c tele.Context) error {
-	c.Respond()
+	if c.Callback() != nil {
+		c.Respond()
+		return h.editContactsPage(c, 1)
+	}
 	return h.sendContactsPage(c, 1)
 }
 
@@ -1058,30 +1033,45 @@ func (h *Handler) buildContactsPage(ownerID int64, page int) (string, *tele.Repl
 		return "👥 لیست مخاطبین شما خالی است.", &tele.ReplyMarkup{}, nil
 	}
 
+	// Batch-load all referenced users in one query to avoid N+1.
+	ids := make([]int64, 0, len(contacts))
+	for _, contact := range contacts {
+		ids = append(ids, contact.ContactID)
+	}
+	loaded, _ := h.users.BatchGetByTelegramIDs(ids)
+	byID := make(map[int64]*user.User, len(loaded))
+	for i := range loaded {
+		byID[loaded[i].TelegramID] = &loaded[i]
+	}
+
 	totalPages := int(math.Ceil(float64(total) / float64(contactsPageSize)))
 	var sb strings.Builder
+	sb.Grow(256 * len(contacts))
 	sb.WriteString("👥👤 لیست مخاطبین شما\n\n")
 
 	for i, contact := range contacts {
-		target, _, err := h.users.GetOrCreate(contact.ContactID)
-		if err != nil {
+		target := byID[contact.ContactID]
+		if target == nil {
 			continue
 		}
 		num := offset + i + 1
 		gender := "👤"
-		if target.Gender == "female" {
+		if target.Gender == user.Female {
 			gender = "👩"
 		}
 		sb.WriteString(fmt.Sprintf("%d. %s ❓ (%s) /user_%s\n", num, gender, contact.Label, target.ID))
 		if target.City != "" {
-			sb.WriteString(fmt.Sprintf("   %s\n", target.City))
+			sb.WriteString("   ")
+			sb.WriteString(target.City)
+			sb.WriteByte('\n')
 		}
-		sb.WriteString(fmt.Sprintf("   %s ⏳\n", formatLastSeen(target.LastSeenAt)))
-		sb.WriteString("〰〰〰〰〰〰〰〰〰〰\n\n")
+		sb.WriteString("   ")
+		sb.WriteString(formatLastSeen(target.LastSeenAt))
+		sb.WriteString(" ⏳\n〰〰〰〰〰〰〰〰〰〰\n\n")
 	}
 
 	sb.WriteString("➖ برای حذف کاربر روی پروفایل کاربر گزینه «حذف از مخاطبین» را بزنید.\n")
-	sb.WriteString(fmt.Sprintf("🗑 حذف همه مخاطبین : /deleteAllContacts"))
+	sb.WriteString("🗑 حذف همه مخاطبین : /deleteAllContacts")
 
 	return sb.String(), ContactsNavKeyboard(page, totalPages), nil
 }
@@ -1125,7 +1115,8 @@ func (h *Handler) BlockAckHandler(c tele.Context) error {
 	return c.Delete()
 }
 
-// آنبلاک کردن کاربر
+// آنبلاک کردن کاربر — answers the callback with a toast and replaces the
+// profile-action keyboard so the button flips to "block" immediately.
 func (h *Handler) UnblockHandler(c tele.Context) error {
 	u, _, err := h.users.GetOrCreate(c.Sender().ID)
 	if err != nil {
@@ -1138,13 +1129,15 @@ func (h *Handler) UnblockHandler(c tele.Context) error {
 	if err := h.users.UnblockUser(u.TelegramID, targetID); err != nil {
 		return c.Respond(&tele.CallbackResponse{Text: "❌ خطا در آنبلاک کردن"})
 	}
-	c.Respond()
-	return c.Send("✅ کاربر آنبلاک شد.")
+	return c.Respond(&tele.CallbackResponse{Text: "✅ کاربر آنبلاک شد"})
 }
 
 // نمایش صفحه اول لیست بلاک‌شده‌ها
 func (h *Handler) BlocksHandler(c tele.Context) error {
-	c.Respond()
+	if c.Callback() != nil {
+		c.Respond()
+		return h.editBlocksPage(c, 1)
+	}
 	return h.sendBlocksPage(c, 1)
 }
 
@@ -1178,12 +1171,11 @@ func (h *Handler) sendBlocksPage(c tele.Context, page int) error {
 
 // ویرایش صفحه موجود
 func (h *Handler) editBlocksPage(c tele.Context, page int) error {
-
 	msg, kb, err := h.buildBlocksPage(c.Sender().ID, page)
 	if err != nil {
 		return c.Respond(&tele.CallbackResponse{Text: "❌ خطا"})
 	}
-	return c.Send(msg, kb)
+	return c.Edit(msg, kb)
 }
 
 // ساخت محتوای صفحه
@@ -1198,33 +1190,46 @@ func (h *Handler) buildBlocksPage(blockerID int64, page int) (string, *tele.Repl
 		return "🚫 لیست بلاک‌شده‌های شما خالی است.", &tele.ReplyMarkup{}, nil
 	}
 
+	ids := make([]int64, 0, len(blocks))
+	for _, b := range blocks {
+		ids = append(ids, b.BlockedID)
+	}
+	loaded, _ := h.users.BatchGetByTelegramIDs(ids)
+	byID := make(map[int64]*user.User, len(loaded))
+	for i := range loaded {
+		byID[loaded[i].TelegramID] = &loaded[i]
+	}
+
 	totalPages := int(math.Ceil(float64(total) / float64(blocksPageSize)))
 	var sb strings.Builder
+	sb.Grow(192 * len(blocks))
 	sb.WriteString("👥 لیست کاربران بلاک شده\n\n")
 
 	for i, block := range blocks {
-		target, _, err := h.users.GetOrCreate(block.BlockedID)
-		if err != nil {
+		target := byID[block.BlockedID]
+		if target == nil {
 			continue
 		}
 		num := offset + i + 1
 		gender := "👤"
-		if target.Gender == "female" {
+		if target.Gender == user.Female {
 			gender = "👩"
 		}
-		sb.WriteString(fmt.Sprintf("%d. %s /user_%d\n", num, gender, target.TelegramID))
+		sb.WriteString(fmt.Sprintf("%d. %s /user_%s\n", num, gender, target.ID))
 		if target.City != "" {
-			sb.WriteString(fmt.Sprintf("   📍 %s\n", target.City))
+			sb.WriteString("   📍 ")
+			sb.WriteString(target.City)
+			sb.WriteByte('\n')
 		}
-		sb.WriteString(fmt.Sprintf("   🕐 %s\n", formatLastSeen(target.LastSeenAt)))
-		sb.WriteString("〰〰〰〰〰〰〰〰〰〰\n\n")
+		sb.WriteString("   🕐 ")
+		sb.WriteString(formatLastSeen(target.LastSeenAt))
+		sb.WriteString("\n〰〰〰〰〰〰〰〰〰〰\n\n")
 	}
 
 	sb.WriteString("➖ برای آنبلاک کردن روی پروفایل کاربر گزینه «آنبلاک کردن کاربر» را بزنید.\n")
 	sb.WriteString("🗑 حذف همه: /deleteAllBlocks")
 
-	kb := BlocksNavKeyboard(page, totalPages)
-	return sb.String(), kb, nil
+	return sb.String(), BlocksNavKeyboard(page, totalPages), nil
 }
 
 // کیبورد ناوبری

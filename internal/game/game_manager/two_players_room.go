@@ -115,18 +115,20 @@ func (rm *RoomManager) GetRoomByPlayerID(playerID int64) *Room {
 }
 
 func (rm *RoomManager) RemoveRoomByRoomID(roomID int64) {
-
 	rm.Mu.Lock()
 	defer rm.Mu.Unlock()
 
-	room := rm.Rooms[roomID]
+	room, ok := rm.Rooms[roomID]
+	if !ok {
+		return
+	}
 
-	delete(rm.PlayerRoom, room.Player1.ID)
-
+	if room.Player1 != nil {
+		delete(rm.PlayerRoom, room.Player1.ID)
+	}
 	if room.Player2 != nil {
 		delete(rm.PlayerRoom, room.Player2.ID)
 	}
-
 	delete(rm.Rooms, roomID)
 }
 

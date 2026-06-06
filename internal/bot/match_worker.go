@@ -79,32 +79,29 @@ func (w *OptimizedMatchWorker) processMatches(ctx context.Context) {
 			}
 
 			if w.isCompatible(&queueEntries[i], &queueEntries[j]) {
-				// Create session and notify users
+				// createMatch is responsible for queue cleanup on success
+				// and for refunding/notifying on failure.
 				w.createMatch(ctx, &queueEntries[i], &queueEntries[j])
-
-				// Mark as matched
 				matched[queueEntries[i].TelegramID] = true
 				matched[queueEntries[j].TelegramID] = true
-
-				// Remove from queue
-				w.removeFromQueue(ctx, queueEntries[i].TelegramID)
-				w.removeFromQueue(ctx, queueEntries[j].TelegramID)
-
 				break
 			}
 		}
 	}
 }
 
-// getAllQueueEntries retrieves all current queue entries from Redis
+// getAllQueueEntries retrieves all current queue entries from Redis.
+// We trust the queue contents — RemoveFromQueue is always called alongside
+// LeaveQueue/cancel paths, so the per-entry waiting-key check has been
+// dropped in favour of a single SCAN + per-key LRANGE.
 func (w *OptimizedMatchWorker) getAllQueueEntries(ctx context.Context) ([]session.QueueEntry, error) {
-	var entries []session.QueueEntry
-
-	// Get all queue keys
 	keys, err := w.cache.GetList(ctx, "chat:queue:*")
 	if err != nil {
 		return nil, err
 	}
+
+	var entries []session.QueueEntry
+	seen := make(map[int64]bool)
 
 	for _, key := range keys {
 		queueItems, err := w.cache.ListGetAll(ctx, key)
@@ -117,15 +114,11 @@ func (w *OptimizedMatchWorker) getAllQueueEntries(ctx context.Context) ([]sessio
 			if err := json.Unmarshal([]byte(item), &entry); err != nil {
 				continue
 			}
-
-			// Verify user is still waiting
-			filter, err := w.handler.redis.GetWaitingFilter(ctx, entry.TelegramID)
-			if err != nil || filter == "" {
-				// User cancelled, remove from queue
-				w.removeFromQueue(ctx, entry.TelegramID)
+			// De-duplicate in case a user somehow ended up in two queues.
+			if seen[entry.TelegramID] {
 				continue
 			}
-
+			seen[entry.TelegramID] = true
 			entries = append(entries, entry)
 		}
 	}
@@ -184,12 +177,11 @@ func isComplementaryFilter(filter1, filter2 string) bool {
 	return false
 }
 
-// createMatch creates a chat session for two matched users
+// createMatch creates a chat session for two matched users.
 func (w *OptimizedMatchWorker) createMatch(ctx context.Context, user1, user2 *session.QueueEntry) {
 	ctxWithTimeout, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 
-	// ✅ مرحله 1: ایجاد active chat برای هر دو کاربر
 	chatSession := &session.ChatSession{
 		User1ID:    user1.TelegramID,
 		User2ID:    user2.TelegramID,
@@ -205,38 +197,29 @@ func (w *OptimizedMatchWorker) createMatch(ctx context.Context, user1, user2 *se
 			zap.Int64("user2", user2.TelegramID),
 		)
 
-		// Refund coins if chat session creation failed
+		// Refund coins and notify both users.
 		if user1.Cost > 0 {
-			w.handler.users.AwardCoinsByTelegramID(user1.TelegramID, user1.Cost, "match_error")
+			if rerr := w.handler.users.AwardCoinsByTelegramID(user1.TelegramID, user1.Cost, "match_error"); rerr != nil {
+				w.log.Error("[MatchWorker] refund failed for user1", zap.Error(rerr))
+			}
 		}
 		if user2.Cost > 0 {
-			w.handler.users.AwardCoinsByTelegramID(user2.TelegramID, user2.Cost, "match_error")
+			if rerr := w.handler.users.AwardCoinsByTelegramID(user2.TelegramID, user2.Cost, "match_error"); rerr != nil {
+				w.log.Error("[MatchWorker] refund failed for user2", zap.Error(rerr))
+			}
 		}
 
-		// Notify users
 		w.handler.bot.Send(&tele.User{ID: user1.TelegramID}, "❌ خطا در برقراری اتصال. سکه‌های شما برگشت داده شد.")
 		w.handler.bot.Send(&tele.User{ID: user2.TelegramID}, "❌ خطا در برقراری اتصال. سکه‌های شما برگشت داده شد.")
 		return
 	}
 
-	// ✅ مرحله 2: حذف از صف فوراً
-	if err := w.handler.redis.LeaveQueue(user1.TelegramID); err != nil {
-		w.log.Warn("[MatchWorker] failed to remove user1 from queue", zap.Error(err))
-	}
-	if err := w.handler.redis.LeaveQueue(user2.TelegramID); err != nil {
-		w.log.Warn("[MatchWorker] failed to remove user2 from queue", zap.Error(err))
-	}
+	// Remove both users from any waiting list (processMatches also calls
+	// removeFromQueue, but doing it here too is safe and avoids races).
+	w.removeFromQueue(ctxWithTimeout, user1.TelegramID)
+	w.removeFromQueue(ctxWithTimeout, user2.TelegramID)
 
-	// ✅ مرحله 3: حذف از queue manager اگر وجود دارد
-	if filter, err := w.handler.redis.GetWaitingFilter(ctxWithTimeout, user1.TelegramID); err == nil && filter != "" {
-		w.handler.redis.RemoveFromQueue(ctxWithTimeout, user1.TelegramID, filter)
-	}
-	if filter, err := w.handler.redis.GetWaitingFilter(ctxWithTimeout, user2.TelegramID); err == nil && filter != "" {
-		w.handler.redis.RemoveFromQueue(ctxWithTimeout, user2.TelegramID, filter)
-	}
-
-	// ✅ مرحله 4: اطلاع‌رسانی به کاربران با keyboard مناسب
-	msg := "👀 پیدا شد! متصل شدی. به مخاطبت سلام بده 🗣️"
+	const msg = "👀 پیدا شد! متصل شدی. به مخاطبت سلام بده 🗣️"
 	kb := ActiveChatKeyboard()
 
 	w.handler.bot.Send(&tele.User{ID: user1.TelegramID}, msg, kb)

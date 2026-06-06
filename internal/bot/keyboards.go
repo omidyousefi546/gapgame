@@ -671,11 +671,13 @@ func boardDoozClassicKeyboardDisabled(Board *[3][3]int) *tele.ReplyMarkup {
 func boardDareAndTruthKeyboard() *tele.ReplyMarkup {
 
 	m := &tele.ReplyMarkup{ResizeKeyboard: true}
-	btnTruth := m.Data("حقیقت", "dare_and_truth_move", "حقیقت")
-	btnDare := m.Data("جرات", "dare_and_truth_move", "جرات")
-	btnTruth18 := m.Data("حقیقت+۱۸", "dare_and_truth_move", "حقیقت+18")
-	btnDare18 := m.Data("جرات+۱۸", "dare_and_truth_move", "جرات+18")
-	btnChance := m.Data("شانسی", "dare_and_truth_move", "شانسی")
+	// NOTE: Unique must match the callback registered for "\fgame_dare_and_truth".
+	// Previously this was "dare_and_truth_move" which caused the buttons to be unhandled.
+	btnTruth := m.Data("حقیقت", "game_dare_and_truth", "حقیقت")
+	btnDare := m.Data("جرات", "game_dare_and_truth", "جرات")
+	btnTruth18 := m.Data("حقیقت+۱۸", "game_dare_and_truth", "حقیقت+18")
+	btnDare18 := m.Data("جرات+۱۸", "game_dare_and_truth", "جرات+18")
+	btnChance := m.Data("شانسی", "game_dare_and_truth", "شانسی")
 	m.Inline(
 		m.Row(btnTruth), m.Row(btnDare),
 		m.Row(btnTruth18), m.Row(btnDare18),

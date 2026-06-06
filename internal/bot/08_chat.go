@@ -134,7 +134,8 @@ func (h *Handler) joinQueue(c tele.Context, u *user.User, filter string, cost in
 		return c.Send("🚫 شما الان در یک چت فعال هستید!\nابتدا چت را پایان دهید.")
 	}
 
-	// کسر سکه
+	// Deduct coins (the service re-reads the user, so we report the message
+	// using the in-memory snapshot which is accurate enough for the user).
 	if cost > 0 {
 		if err := h.users.DeductCoins(u.TelegramID, cost); err != nil {
 			return c.Send(fmt.Sprintf(
@@ -263,35 +264,40 @@ func (h *Handler) CancelQueueHandler(c tele.Context) error {
 	ctx, cancel := utils.NewRequestContext()
 	defer cancel()
 
-	// ✅ استفاده از روش جدید IsInQueue و LeaveQueue
 	inQueue, err := h.redis.IsInQueue(u.TelegramID)
 	if err != nil {
 		h.log.Error("redis error checking queue", zap.Error(err))
 		return c.Send("❌ خطا در سیستم")
 	}
+
+	var refund int
 	if inQueue {
-		// برگشت سکه اگه توی صف بوده
-		filter, err := h.redis.GetWaitingFilter(ctx, u.TelegramID)
-		if err != nil {
-			h.log.Error("redis error getting filter", zap.Error(err))
-		}
-		if filter != "" {
-			items, err := h.redis.GetQueueEntry(ctx, u.TelegramID, filter)
-			if err != nil {
-				h.log.Error("redis error getting queue entry", zap.Error(err))
-			} else if items != nil && items.Cost > 0 {
-				h.users.AwardCoinsByTelegramID(u.TelegramID, items.Cost, "cancel_queue")
-				c.Send(fmt.Sprintf("💰 %d سکه‌ات برگشت داده شد.", items.Cost))
+		// Refund the join cost (if any) and pull the entry from the queue.
+		if filter, ferr := h.redis.GetWaitingFilter(ctx, u.TelegramID); ferr == nil && filter != "" {
+			if entry, gerr := h.redis.GetQueueEntry(ctx, u.TelegramID, filter); gerr == nil && entry != nil && entry.Cost > 0 {
+				if aerr := h.users.AwardCoinsByTelegramID(u.TelegramID, entry.Cost, "cancel_queue"); aerr != nil {
+					h.log.Error("refund failed", zap.Error(aerr))
+				} else {
+					refund = entry.Cost
+				}
 			}
-			if err := h.redis.RemoveFromQueue(ctx, u.TelegramID, filter); err != nil {
-				h.log.Error("redis error removing from queue", zap.Error(err))
+			if rerr := h.redis.RemoveFromQueue(ctx, u.TelegramID, filter); rerr != nil {
+				h.log.Error("redis error removing from queue", zap.Error(rerr))
 			}
 		}
-		// ✅ حذف علامت "در صف" بودن
 		if err := h.redis.LeaveQueue(u.TelegramID); err != nil {
 			h.log.Error("redis error leaving queue", zap.Error(err))
 		}
 	}
 
-	return c.Send("❌ از صف خارج شدید.", MainMenuKeyboard())
+	// Remove the "searching…" inline message so the chat stays clean.
+	if c.Callback() != nil {
+		_ = c.Delete()
+	}
+
+	msg := "❌ از صف خارج شدید."
+	if refund > 0 {
+		msg = fmt.Sprintf("❌ از صف خارج شدید.\n💰 %d سکه‌ات برگشت داده شد.", refund)
+	}
+	return c.Send(msg, MainMenuKeyboard())
 }

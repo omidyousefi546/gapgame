@@ -127,6 +127,7 @@ func (h *Handler) RegisterHandlers() {
 
 	h.bot.Handle("\fstype", h.SearchTypeHandler)
 	h.bot.Handle("\fspage", h.SearchPageHandler)
+	h.bot.Handle("\fsprov", h.SearchProvinceHandler)
 
 	// // Gender filter in search
 
@@ -153,7 +154,7 @@ func (h *Handler) RegisterHandlers() {
 	h.bot.Handle(&btnContacts, h.MyContactsHandler)
 	h.bot.Handle(&btnAddContact, h.AddContactHandler)
 	h.bot.Handle(&btnRemoveContact, h.RemoveContactHandler)
-	//h.bot.Handle(tele.OnCallback /* contactsPage */, h.ContactsPageHandler) // با Unique
+	h.bot.Handle("\fcontactsPage", h.ContactsPageHandler)
 
 	h.bot.Handle(&btnBlocksList, h.BlocksHandler) // لیست بلاک‌شده‌ها
 	h.bot.Handle(&btnBlockAck, h.BlockAckHandler)

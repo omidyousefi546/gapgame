@@ -120,12 +120,30 @@ func (h *Handler) repeatGameHandler(c tele.Context) error {
 	if room == nil {
 		return c.Send(utils.GameCancelledOpponent, MainMenuKeyboard())
 	}
+	// A repeat requires both players to still be present.
+	if room.Player2 == nil {
+		return c.Send(utils.GameCancelledOpponent, MainMenuKeyboard())
+	}
 
 	if c.Sender().ID != room.Player1.ID {
 		room.Player2 = room.Player1
 		room.Player1 = c.Sender()
 	}
 	room.Turn = room.Player1.ID
+	room.State.Reset()
+
+	// Pick the right board keyboard for whatever game type was being played.
+	var board *tele.ReplyMarkup
+	switch g := room.State.(type) {
+	case *dooz4.GameDooz4:
+		board = boardDooz4Keyboard(&g.Board)
+	case *dooz_classic.GameDoozClassic:
+		board = boardDoozClassicKeyboard(&g.Board)
+	case *dare_and_truth.GameDareTruth:
+		board = boardDareAndTruthKeyboard()
+	default:
+		return c.Send(utils.GameCancelledOpponent, MainMenuKeyboard())
+	}
 
 	text := fmt.Sprintf("🎮 بازی شروع شد \nنوبت %v (%v)", room.Player1.FirstName, "🔴")
 
@@ -136,15 +154,13 @@ func (h *Handler) repeatGameHandler(c tele.Context) error {
 		h.log.Error("failed to send game restart to player2", zap.Error(err))
 	}
 
-	room.State.Reset()
-	game := room.State.(*dooz4.GameDooz4)
-	msg1, err := h.bot.Send(room.Player1, text, boardDooz4Keyboard(&game.Board))
+	msg1, err := h.bot.Send(room.Player1, text, board)
 	if err != nil {
 		h.log.Error("failed to send board to player1", zap.Error(err))
 	} else {
 		room.MsgID1 = msg1.ID
 	}
-	msg2, err := h.bot.Send(room.Player2, text, boardDooz4Keyboard(&game.Board))
+	msg2, err := h.bot.Send(room.Player2, text, board)
 	if err != nil {
 		h.log.Error("failed to send board to player2", zap.Error(err))
 	} else {
@@ -188,7 +204,10 @@ func (h *Handler) handleGameJoin(c tele.Context, payload string) error {
 		return c.Send("بازی پر شده ❗", MainMenuKeyboard())
 	}
 
-	h.rooms.JoinRoom(room.ID, c.Sender())
+	room, ok := h.rooms.JoinRoom(room.ID, c.Sender())
+	if !ok {
+		return c.Send("بازی پر شده ❗", MainMenuKeyboard())
+	}
 
 	// فعال کردن session برای بازیکن دوم
 	h.redis.SetUserState(c.Sender().ID, session.StateInGame)

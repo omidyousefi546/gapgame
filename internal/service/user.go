@@ -383,6 +383,17 @@ func (s *UserService) GetContacts(ownerID int64, offset, limit int) ([]user.Cont
 	defer cancel()
 	return s.repo.GetContacts(ctx, ownerID, offset, limit)
 }
+
+// BatchGetByTelegramIDs returns multiple users in a single query.
+// Used to avoid N+1 lookups when rendering paginated lists.
+func (s *UserService) BatchGetByTelegramIDs(ids []int64) ([]user.User, error) {
+	if len(ids) == 0 {
+		return nil, nil
+	}
+	ctx, cancel := utils.NewRequestContext()
+	defer cancel()
+	return s.repoOpt.BatchGetByTelegramIDs(ctx, ids)
+}
 func (s *UserService) DeleteAllContacts(ownerID int64) error {
 	ctx, cancel := utils.NewRequestContext()
 	defer cancel()
