@@ -17,14 +17,38 @@ type GameState interface {
 }
 
 type Room struct {
-	ID       int64      `json:"id"`
-	Player1  *tele.User `json:"player1"`
-	Player2  *tele.User `json:"player2"`
-	Turn     int64      `json:"turn"`
-	MsgID1   int        `json:"msg_id1"`
-	MsgID2   int        `json:"msg_id2"`
-	LastMove time.Time  `json:"last_move"`
-	State    GameState  `json:"-"`
+	ID          int64      `json:"id"`
+	Player1     *tele.User `json:"player1"`
+	Player2     *tele.User `json:"player2"`
+	Player1Name string     `json:"player1_name"`
+	Player2Name string     `json:"player2_name"`
+	Turn        int64      `json:"turn"`
+	MsgID1      int        `json:"msg_id1"`
+	MsgID2      int        `json:"msg_id2"`
+	LastMove    time.Time  `json:"last_move"`
+	State       GameState  `json:"-"`
+}
+
+func (r *Room) NameFor(playerID int64) string {
+	if r.Player1 != nil && playerID == r.Player1.ID {
+		if r.Player1Name != "" {
+			return r.Player1Name
+		}
+		if r.Player1.FirstName != "" {
+			return r.Player1.FirstName
+		}
+		return "کاربر"
+	}
+	if r.Player2 != nil && playerID == r.Player2.ID {
+		if r.Player2Name != "" {
+			return r.Player2Name
+		}
+		if r.Player2.FirstName != "" {
+			return r.Player2.FirstName
+		}
+		return "کاربر"
+	}
+	return "کاربر"
 }
 
 type RoomManager struct {
@@ -94,23 +118,24 @@ func (rm *RoomManager) SaveRoom(room *Room) error {
 	return err
 }
 
-func (rm *RoomManager) CreateRoom(player *tele.User, state GameState) *Room {
+func (rm *RoomManager) CreateRoom(player *tele.User, state GameState, p1Name string) *Room {
 	ctx := context.Background()
 	id, _ := rm.rdb.Incr(ctx, "game:next_id").Result()
 
 	room := &Room{
-		ID:       id,
-		Player1:  player,
-		Turn:     player.ID,
-		LastMove: time.Now(),
-		State:    state,
+		ID:          id,
+		Player1:     player,
+		Player1Name: p1Name,
+		Turn:        player.ID,
+		LastMove:    time.Now(),
+		State:       state,
 	}
 
 	rm.SaveRoom(room)
 	return room
 }
 
-func (rm *RoomManager) JoinRoom(id int64, player *tele.User) (*Room, bool) {
+func (rm *RoomManager) JoinRoom(id int64, player *tele.User, p2Name string) (*Room, bool) {
 	room := rm.getRoomByID(id)
 	if room == nil {
 		return nil, false
@@ -121,6 +146,7 @@ func (rm *RoomManager) JoinRoom(id int64, player *tele.User) (*Room, bool) {
 	}
 
 	room.Player2 = player
+	room.Player2Name = p2Name
 	rm.SaveRoom(room)
 
 	return room, true
@@ -200,7 +226,12 @@ func (r *Room) Reset() {
 }
 
 func (r *Room) StartRoom(b *tele.Bot, keyboard *tele.ReplyMarkup) {
-	text := fmt.Sprintf("🎮 برای طرف مقابلت یک مورد را انتخاب کن \nنوبت %v ", r.Player1.FirstName)
+	var text string
+	if r.State != nil && r.State.GameType() == "gameDareAndTruth" {
+		text = fmt.Sprintf("🎮 برای طرف مقابلت یک مورد را انتخاب کن \nنوبت %v ", r.NameFor(r.Player1.ID))
+	} else {
+		text = fmt.Sprintf("🎮 بازی شروع شد \nنوبت %v (%v)", r.NameFor(r.Player1.ID), "🔴")
+	}
 
 	msg1, _ := b.Send(r.Player1, text, keyboard)
 	r.MsgID1 = msg1.ID

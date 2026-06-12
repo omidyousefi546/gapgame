@@ -523,6 +523,12 @@ func (m *Manager) HasActiveChat(userID int64) (bool, error) {
 	return partnerID != 0, nil
 }
 
+// HasActiveChatSilent checks if user already has active chat ignoring errors
+func (m *Manager) HasActiveChatSilent(userID int64) bool {
+	has, _ := m.HasActiveChat(userID)
+	return has
+}
+
 // EndChat removes active chat for user
 func (m *Manager) EndChat(userID int64) error {
 	ctx, cancel := utils.NewRequestContext()

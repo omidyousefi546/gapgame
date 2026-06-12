@@ -272,6 +272,16 @@ func (h *Handler) ConfirmEndChatHandler(c tele.Context) error {
 		// Error already logged by redis manager
 	}
 
+	// ✅ Remove any active game rooms and clear user states for both players
+	if r1 := h.rooms.GetRoomByPlayerID(u.TelegramID); r1 != nil {
+		h.rooms.RemoveRoomByRoomID(r1.ID)
+	}
+	if r2 := h.rooms.GetRoomByPlayerID(partnerID); r2 != nil {
+		h.rooms.RemoveRoomByRoomID(r2.ID)
+	}
+	h.redis.ClearUserState(u.TelegramID)
+	h.redis.ClearUserState(partnerID)
+
 	partnerRef := messages.ErrUserNotFound
 	if partner, perr := h.users.GetByTelegramID(partnerID); perr == nil {
 		partnerRef = userPublicRef(partner.ID)

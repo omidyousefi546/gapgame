@@ -185,46 +185,29 @@ func (g *GameDareTruth) MakeMove(
 		return
 	}
 
-	var user string
+	var nextUser string
 	var prefix string
 
 	if room.Turn == room.Player1.ID {
-		prefix = fmt.Sprintf("%v عزیز، به سوال زیر پاسخ بده\n", room.Player2.FirstName)
+		prefix = fmt.Sprintf("%v عزیز، به سوال زیر پاسخ بده:\n", room.NameFor(room.Player2.ID))
 		room.Turn = room.Player2.ID
-		user = room.Player2.FirstName
-
+		nextUser = room.NameFor(room.Player2.ID)
 	} else {
-		prefix = fmt.Sprintf("%v عزیز، به سوال زیر پاسخ بده\n", room.Player1.FirstName)
+		prefix = fmt.Sprintf("%v عزیز، به سوال زیر پاسخ بده:\n", room.NameFor(room.Player1.ID))
 		room.Turn = room.Player1.ID
-		user = room.Player1.FirstName
+		nextUser = room.NameFor(room.Player1.ID)
 	}
 
-	msg := fmt.Sprintf("برای طرف مقابلت یک مورد را انتخاب کن \nنوبت %v ", user)
-
-	b.Edit(&tele.StoredMessage{
-		MessageID: strconv.Itoa(room.MsgID1),
-		ChatID:    room.Player1.ID,
-	}, msg, keyboard)
-
-	b.Edit(&tele.StoredMessage{
-		MessageID: strconv.Itoa(room.MsgID2),
-		ChatID:    room.Player2.ID,
-	}, msg, keyboard)
-
 	question := g.GetRandomQuestion(category)
-
-	question = prefix + "نوع سوال: " + (category) + "\n" + (question)
+	fullText := fmt.Sprintf("%s\nنوع چالش: %s\n%s\n\nنوبت بعدی برای انتخاب چالش: %s", prefix, category, question, nextUser)
 
 	b.Edit(&tele.StoredMessage{
 		MessageID: strconv.Itoa(room.MsgID1),
 		ChatID:    room.Player1.ID,
-	}, question)
+	}, fullText, keyboard)
 
 	b.Edit(&tele.StoredMessage{
 		MessageID: strconv.Itoa(room.MsgID2),
 		ChatID:    room.Player2.ID,
-	}, question)
-
-	//b.Send(room.Player2, prefix, ingamekeyboard())
-
+	}, fullText, keyboard)
 }

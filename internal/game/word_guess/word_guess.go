@@ -4,19 +4,21 @@ type GuessState string
 
 const (
 	StateChoosingType    GuessState = "choosing_type"
+	StateChoosingLength  GuessState = "choosing_length"
 	StateWaitingForWord  GuessState = "waiting_for_word" // legacy alias kept for old saved rooms
 	StateWaitingSecrets  GuessState = "waiting_secrets"
 	StatePlaying         GuessState = "playing"
 )
 
 type GameWordGuess struct {
-	Type string `json:"type"` // "fa", "en", "num"
+	Type         string `json:"type"`          // "fa", "en", "num"
+	TargetLength int    `json:"target_length"` // fixed length per game session
 
 	// Legacy single-target fields kept so older serialized rooms can still load.
-	TargetWord   string `json:"target_word"`
-	DisplayWord  string `json:"display_word"`
-	GuesserID    int64  `json:"guesser_id"`
-	CreatorID    int64  `json:"creator_id"`
+	TargetWord   string   `json:"target_word"`
+	DisplayWord  string   `json:"display_word"`
+	GuesserID    int64    `json:"guesser_id"`
+	CreatorID    int64    `json:"creator_id"`
 	WrongGuesses []string `json:"wrong_guesses"`
 	MaxTries     int      `json:"max_tries"`
 
@@ -40,6 +42,7 @@ type GameWordGuess struct {
 
 func (g *GameWordGuess) Reset() {
 	g.Type = ""
+	g.TargetLength = 0
 	g.TargetWord = ""
 	g.DisplayWord = ""
 	g.GuesserID = 0

@@ -209,6 +209,7 @@ var (
 	btnChatGameWord      = tele.Btn{Unique: "cgame_req", Text: "📝 حدس کلمه", Data: "word"}
 	btnChatGameDooz4     = tele.Btn{Unique: "cgame_req", Text: "🔴 دوز ۴ تایی", Data: "dooz4"}
 	btnChatGameDoozClass = tele.Btn{Unique: "cgame_req", Text: "❌ دوز کلاسیک", Data: "dooz3"}
+	btnChatGameDareTruth = tele.Btn{Unique: "cgame_req", Text: "🎭 جرات حقیقت", Data: "dare_and_truth"}
 )
 
 // Keyboards

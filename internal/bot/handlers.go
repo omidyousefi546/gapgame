@@ -285,6 +285,7 @@ func (h *Handler) RegisterHandlers() {
 	h.bot.Handle("\fgame_dare_and_truth", h.moveDareAndTruthHandler)
 	h.bot.Handle("\fmove_rps", h.moveRPSHandler)
 	h.bot.Handle("\fword_type", h.wordTypeHandler)
+	h.bot.Handle("\fword_len", h.wordLengthHandler)
 	h.bot.Handle("\fword_guess", h.wordGuessMoveHandler)
 
 	// // Message types

@@ -479,6 +479,7 @@ func ChatGameMenuKeyboard() *tele.ReplyMarkup {
 	menu.Inline(
 		menu.Row(btnChatGameRPS, btnChatGameWord),
 		menu.Row(btnChatGameDooz4, btnChatGameDoozClass),
+		menu.Row(btnChatGameDareTruth),
 	)
 	return menu
 }

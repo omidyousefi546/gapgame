@@ -90,44 +90,28 @@ func (g *GameDooz4Normal) MakeMove(
 	}
 
 	markNumber := 1
-	mark := "🔵"
 
 	if player.ID == room.Player2.ID {
 		markNumber = 2
-		mark = "🔴"
 	}
 
-	// اضافه کردن منطق جاذبه (پر شدن از پایین)
-	found := false
-	for i := 0; i < 7; i++ {
-		if g.Board[y][6-i] == 0 {
-			x = 6 - i
-			g.Board[y][x] = markNumber
-			found = true
-			break
-		}
-	}
-
-	if !found {
-		c.Respond(&tele.CallbackResponse{
-			Text: "این ستون پر شده است!",
-		})
-		return false
-	}
+	g.Board[y][x] = markNumber
 
 	var user string
+	var nextMark string
 
 	if room.Turn == room.Player1.ID {
 		room.Turn = room.Player2.ID
-		user = room.Player2.FirstName
-
+		user = room.NameFor(room.Player2.ID)
+		nextMark = "🔵"
 	} else {
 		room.Turn = room.Player1.ID
-		user = room.Player1.FirstName
+		user = room.NameFor(room.Player1.ID)
+		nextMark = "🔴"
 	}
 
 	board := boardDooz4Keyboard(&g.Board)
-	msg := fmt.Sprintf("نوبت %v (%v)", user, mark)
+	msg := fmt.Sprintf("نوبت %v (%v)", user, nextMark)
 	b.Edit(&tele.StoredMessage{
 		MessageID: strconv.Itoa(room.MsgID1),
 		ChatID:    room.Player1.ID,
@@ -139,24 +123,23 @@ func (g *GameDooz4Normal) MakeMove(
 
 	if g.CheckWin(x, y, markNumber) {
 		if player.ID == room.Player1.ID {
-
 			b.Edit(&tele.StoredMessage{
 				MessageID: strconv.Itoa(room.MsgID1),
 				ChatID:    room.Player1.ID,
-			}, fmt.Sprintf(messages.GameWinWithName, player.FirstName), boardDooz4KeyboardDisabled(&g.Board))
+			}, fmt.Sprintf(messages.GameWinWithName, room.NameFor(room.Player1.ID)), boardDooz4KeyboardDisabled(&g.Board))
 			b.Edit(&tele.StoredMessage{
 				MessageID: strconv.Itoa(room.MsgID2),
 				ChatID:    room.Player2.ID,
-			}, fmt.Sprintf(messages.GameLoseWithName, player.FirstName), boardDooz4KeyboardDisabled(&g.Board))
+			}, fmt.Sprintf(messages.GameLoseWithName, room.NameFor(room.Player1.ID)), boardDooz4KeyboardDisabled(&g.Board))
 		} else {
 			b.Edit(&tele.StoredMessage{
 				MessageID: strconv.Itoa(room.MsgID2),
 				ChatID:    room.Player2.ID,
-			}, fmt.Sprintf(messages.GameWinWithName, player.FirstName), boardDooz4KeyboardDisabled(&g.Board))
+			}, fmt.Sprintf(messages.GameWinWithName, room.NameFor(room.Player2.ID)), boardDooz4KeyboardDisabled(&g.Board))
 			b.Edit(&tele.StoredMessage{
 				MessageID: strconv.Itoa(room.MsgID1),
 				ChatID:    room.Player1.ID,
-			}, fmt.Sprintf(messages.GameLoseWithName, player.FirstName), boardDooz4KeyboardDisabled(&g.Board))
+			}, fmt.Sprintf(messages.GameLoseWithName, room.NameFor(room.Player2.ID)), boardDooz4KeyboardDisabled(&g.Board))
 		}
 		room.Reset()
 		return true

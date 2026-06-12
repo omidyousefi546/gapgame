@@ -98,17 +98,16 @@ func (g *GameDoozClassic) MakeMove(
 
 	g.Board[y][x] = markNumber
 	var user string
+	var nextMark string
 
-	nextMark := "🔵"
 	if room.Turn == room.Player1.ID {
 		room.Turn = room.Player2.ID
-		user = room.Player2.FirstName
-		nextMark = "🔴"
-
+		user = room.NameFor(room.Player2.ID)
+		nextMark = "🔵"
 	} else {
 		room.Turn = room.Player1.ID
-		user = room.Player1.FirstName
-		nextMark = "🔵"
+		user = room.NameFor(room.Player1.ID)
+		nextMark = "🔴"
 	}
 
 	board := boardDoozClassicKeyboard(&g.Board)
@@ -124,24 +123,23 @@ func (g *GameDoozClassic) MakeMove(
 
 	if g.CheckWin(x, y, markNumber) {
 		if player.ID == room.Player1.ID {
-
 			b.Edit(&tele.StoredMessage{
 				MessageID: strconv.Itoa(room.MsgID1),
 				ChatID:    room.Player1.ID,
-			}, fmt.Sprintf(messages.GameWinWithName, player.FirstName), boardDoozClassicKeyboardDisabled(&g.Board))
+			}, fmt.Sprintf(messages.GameWinWithName, room.NameFor(room.Player1.ID)), boardDoozClassicKeyboardDisabled(&g.Board))
 			b.Edit(&tele.StoredMessage{
 				MessageID: strconv.Itoa(room.MsgID2),
 				ChatID:    room.Player2.ID,
-			}, fmt.Sprintf(messages.GameLoseWithName, player.FirstName), boardDoozClassicKeyboardDisabled(&g.Board))
+			}, fmt.Sprintf(messages.GameLoseWithName, room.NameFor(room.Player1.ID)), boardDoozClassicKeyboardDisabled(&g.Board))
 		} else {
 			b.Edit(&tele.StoredMessage{
 				MessageID: strconv.Itoa(room.MsgID2),
 				ChatID:    room.Player2.ID,
-			}, fmt.Sprintf(messages.GameWinWithName, player.FirstName), boardDoozClassicKeyboardDisabled(&g.Board))
+			}, fmt.Sprintf(messages.GameWinWithName, room.NameFor(room.Player2.ID)), boardDoozClassicKeyboardDisabled(&g.Board))
 			b.Edit(&tele.StoredMessage{
 				MessageID: strconv.Itoa(room.MsgID1),
 				ChatID:    room.Player1.ID,
-			}, fmt.Sprintf(messages.GameLoseWithName, player.FirstName), boardDoozClassicKeyboardDisabled(&g.Board))
+			}, fmt.Sprintf(messages.GameLoseWithName, room.NameFor(room.Player2.ID)), boardDoozClassicKeyboardDisabled(&g.Board))
 		}
 		room.Reset()
 		return true
