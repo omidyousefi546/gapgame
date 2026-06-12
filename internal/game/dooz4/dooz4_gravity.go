@@ -21,6 +21,17 @@ func (g *GameDooz4) GameType() string {
 	return "gameDooz4Gravity"
 }
 
+func (g *GameDooz4) IsDraw() bool {
+	for _, row := range g.Board {
+		for _, cell := range row {
+			if cell == 0 {
+				return false
+			}
+		}
+	}
+	return true
+}
+
 func (g *GameDooz4) CheckWin(x, y, markNumber int) bool {
 
 	directions := [][]int{
@@ -81,13 +92,6 @@ func (g *GameDooz4) MakeMove(
 		return false
 	}
 
-	if g.Board[y][x] != 0 {
-		c.Respond(&tele.CallbackResponse{
-			Text: "انتخاب شده است!",
-		})
-
-		return false
-	}
 
 	markNumber := 1
 
@@ -156,6 +160,18 @@ func (g *GameDooz4) MakeMove(
 				ChatID:    room.Player1.ID,
 			}, fmt.Sprintf(messages.GameLoseWithName, room.NameFor(room.Player2.ID)), boardDooz4KeyboardDisabled(&g.Board))
 		}
+		room.Reset()
+		return true
+	} else if g.IsDraw() {
+		drawMsg := "🤝 بازی مساوی شد! همه خانه‌ها پر شدند و هیچ بازیکنی برنده نشد."
+		b.Edit(&tele.StoredMessage{
+			MessageID: strconv.Itoa(room.MsgID1),
+			ChatID:    room.Player1.ID,
+		}, drawMsg, boardDooz4KeyboardDisabled(&g.Board))
+		b.Edit(&tele.StoredMessage{
+			MessageID: strconv.Itoa(room.MsgID2),
+			ChatID:    room.Player2.ID,
+		}, drawMsg, boardDooz4KeyboardDisabled(&g.Board))
 		room.Reset()
 		return true
 	} else {

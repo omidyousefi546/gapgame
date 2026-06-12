@@ -14,6 +14,7 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+	"unicode"
 
 	tele "gopkg.in/telebot.v3"
 )
@@ -562,7 +563,7 @@ func (h *Handler) wordTypeHandler(c tele.Context) error {
 	game.State = word_guess.StateChoosingLength
 	game.CreatorID = c.Sender().ID
 
-	prompt := "📏 تعداد کاراکترها (یا ارقام) رمز در این بازی را انتخاب کن:"
+	prompt := fmt.Sprintf("%s\n\n📏 تعداد کاراکترها/ارقام رمز در این بازی را انتخاب کن:", wordGameTypeLabel(game.Type))
 	h.bot.Edit(c.Message(), prompt, boardWordLengthKeyboard())
 
 	partnerID := room.Player1.ID
@@ -570,7 +571,7 @@ func (h *Handler) wordTypeHandler(c tele.Context) error {
 		partnerID = room.Player2.ID
 	}
 	if partnerID != c.Sender().ID {
-		h.bot.Send(&tele.User{ID: partnerID}, "⏳ حریف در حال انتخاب تعداد کاراکترهای بازی است...")
+		h.bot.Send(&tele.User{ID: partnerID}, fmt.Sprintf("⏳ حریف در حال انتخاب تعداد کاراکترهای بازی است...\n%s", wordGameTypeLabel(game.Type)))
 	}
 	h.rooms.SaveRoom(room)
 	return nil
@@ -594,18 +595,8 @@ func (h *Handler) wordLengthHandler(c tele.Context) error {
 	game.State = word_guess.StateWaitingSecrets
 	game.CurrentTurn = room.Player1.ID
 
-	var gameTypeDesc string
-	switch game.Type {
-	case "num":
-		gameTypeDesc = "🔢 نوع بازی: عدد"
-	case "fa":
-		gameTypeDesc = "📝 نوع بازی: کلمه (فارسی)"
-	case "en":
-		gameTypeDesc = "📝 نوع بازی: کلمه (انگلیسی)"
-	}
-
 	creatorName := room.NameFor(game.CreatorID)
-	announcement := fmt.Sprintf("🎮 تنظیمات بازی توسط %s تعیین شد:\n\n%s\n📏 طول دقیق رمز: %d کاراکتر/رقم\n\n🔐 لطفاً رمز خود را (دقیقاً %d کاراکتر/رقم) به صورت پیام متنی ارسال کنید.", creatorName, gameTypeDesc, game.TargetLength, game.TargetLength)
+	announcement := fmt.Sprintf("🎮 تنظیمات بازی توسط %s تعیین شد:\n\n%s\n\n🔐 لطفاً رمز خود را به صورت پیام متنی ارسال کنید. رمز باید دقیقاً %d %s باشد.", creatorName, wordGameSummary(game), game.TargetLength, wordGameUnit(game.Type))
 
 	h.bot.Edit(c.Message(), announcement)
 	partnerID := room.Player1.ID
@@ -620,12 +611,12 @@ func (h *Handler) wordLengthHandler(c tele.Context) error {
 }
 
 func (h *Handler) wordGuessMoveHandler(c tele.Context) error {
-	char := c.Callback().Data
 	room := h.rooms.GetRoomByPlayerID(c.Sender().ID)
 	if room == nil {
 		return nil
 	}
 	game := room.State.(*word_guess.GameWordGuess)
+	char := normalizeSecretInput(game.Type, c.Callback().Data)
 	if game.Type == "num" {
 		return c.Respond(&tele.CallbackResponse{Text: "در حالت عددی، حدس را به صورت پیام متنی ارسال کنید."})
 	}
@@ -633,7 +624,10 @@ func (h *Handler) wordGuessMoveHandler(c tele.Context) error {
 		return c.Respond(&tele.CallbackResponse{Text: "بازی هنوز آماده نیست."})
 	}
 	if c.Sender().ID != game.CurrentTurn {
-		return c.Respond(&tele.CallbackResponse{Text: "نوبت شما نیست!"})
+		return c.Respond(&tele.CallbackResponse{Text: fmt.Sprintf("نوبت شما نیست! نوبت فعلی: %s", room.NameFor(game.CurrentTurn))})
+	}
+	if len([]rune(char)) != 1 || !isValidSecretForType(game.Type, char) {
+		return c.Respond(&tele.CallbackResponse{Text: fmt.Sprintf("حرف نامعتبر برای %s", wordGameTypeLabel(game.Type))})
 	}
 	if alreadyWordGuessed(game, c.Sender().ID, char, room) {
 		return c.Respond(&tele.CallbackResponse{Text: "این حرف قبلاً انتخاب شده است."})
@@ -652,9 +646,9 @@ func (h *Handler) wordGuessMoveHandler(c tele.Context) error {
 		if c.Sender().ID == room.Player1.ID && room.Player2 != nil {
 			loser = room.Player2
 		}
-		h.bot.Send(c.Sender(), fmt.Sprintf("🎉 تبریک! کلمه حریف را کامل حدس زدی و برنده شدی.\nبرنده: %s", winnerName), h.menuKeyboardFor(c.Sender().ID))
+		h.bot.Send(c.Sender(), fmt.Sprintf("🎉 تبریک! کلمه حریف را کامل حدس زدی و برنده شدی.\n%s\nبرنده: %s", wordGameSummary(game), winnerName), h.menuKeyboardFor(c.Sender().ID))
 		if loser.ID != c.Sender().ID {
-			h.bot.Send(loser, fmt.Sprintf("💀 حریف کلمه شما را کامل حدس زد.\nبرنده: %s", winnerName), h.menuKeyboardFor(loser.ID))
+			h.bot.Send(loser, fmt.Sprintf("💀 حریف کلمه شما را کامل حدس زد.\n%s\nبرنده: %s", wordGameSummary(game), winnerName), h.menuKeyboardFor(loser.ID))
 			h.redis.ClearUserState(loser.ID)
 		}
 		h.redis.ClearUserState(c.Sender().ID)
@@ -763,8 +757,13 @@ func (h *Handler) handleWordGameText(c tele.Context, room *game_manager.Room, ga
 	if game.State == word_guess.StateWaitingSecrets {
 		return true, h.handleWordSecretInput(c, room, game, text)
 	}
-	if game.State == word_guess.StatePlaying && game.Type == "num" {
-		return true, h.handleNumberGuessInput(c, room, game, text)
+	if game.State == word_guess.StatePlaying {
+		if game.Type == "num" {
+			return true, h.handleNumberGuessInput(c, room, game, text)
+		}
+		if game.Type == "fa" || game.Type == "en" {
+			return true, h.handleWordGuessTextInput(c, room, game, text)
+		}
 	}
 	return false, nil
 }
@@ -772,10 +771,10 @@ func (h *Handler) handleWordGameText(c tele.Context, room *game_manager.Room, ga
 func (h *Handler) handleWordSecretInput(c tele.Context, room *game_manager.Room, game *word_guess.GameWordGuess, text string) error {
 	secret := normalizeSecretInput(game.Type, text)
 	if !isValidSecretForType(game.Type, secret) {
-		return editOrSend(c, messages.GameWordTooLong)
+		return editOrSend(c, fmt.Sprintf("❌ ورودی نامعتبر است.\n%s\nرمز باید بدون فاصله و دقیقاً مطابق نوع بازی باشد.", wordGameSummary(game)))
 	}
 	if len([]rune(secret)) != game.TargetLength {
-		return editOrSend(c, fmt.Sprintf("❌ طول رمز ارسالی اشتباه است!\nرمز شما باید دقیقاً %d کاراکتر/رقم باشد.", game.TargetLength))
+		return editOrSend(c, fmt.Sprintf("❌ طول رمز ارسالی اشتباه است!\n%s\nرمز شما باید دقیقاً %d %s باشد.", wordGameSummary(game), game.TargetLength, wordGameUnit(game.Type)))
 	}
 
 	if c.Sender().ID == room.Player1.ID {
@@ -792,7 +791,7 @@ func (h *Handler) handleWordSecretInput(c tele.Context, room *game_manager.Room,
 		game.P2Ready = true
 	}
 	h.rooms.SaveRoom(room)
-	h.bot.Send(c.Sender(), messages.GameWordSet)
+	h.bot.Send(c.Sender(), fmt.Sprintf("%s\n%s", messages.GameWordSet, wordGameSummary(game)))
 
 	if game.P1Ready && game.P2Ready {
 		game.State = word_guess.StatePlaying
@@ -807,7 +806,7 @@ func (h *Handler) handleWordSecretInput(c tele.Context, room *game_manager.Room,
 			opponent = room.Player2
 		}
 		if opponent.ID != c.Sender().ID {
-			h.bot.Send(opponent, "✅ حریف رمز خود را ثبت کرد. منتظر ثبت رمز شما هستیم.")
+			h.bot.Send(opponent, fmt.Sprintf("✅ حریف رمز خود را ثبت کرد. منتظر ثبت رمز شما هستیم.\n%s", wordGameSummary(game)))
 		}
 	}
 	return nil
@@ -819,10 +818,10 @@ func (h *Handler) handleNumberGuessInput(c tele.Context, room *game_manager.Room
 	}
 	guess := normalizeSecretInput("num", text)
 	if !isValidSecretForType("num", guess) {
-		return editOrSend(c, "❌ ورودی نامعتبر است. فقط ارقام انگلیسی بفرستید.")
+		return editOrSend(c, fmt.Sprintf("❌ ورودی نامعتبر است.\n%s\nفقط رقم بفرستید.", wordGameSummary(game)))
 	}
 	if len([]rune(guess)) != game.TargetLength {
-		return editOrSend(c, fmt.Sprintf("❌ حدس شما باید دقیقاً %d رقم باشد.", game.TargetLength))
+		return editOrSend(c, fmt.Sprintf("❌ حدس شما باید دقیقاً %d %s باشد.\n%s", game.TargetLength, wordGameUnit(game.Type), wordGameSummary(game)))
 	}
 
 	target := game.P1Secret
@@ -832,7 +831,7 @@ func (h *Handler) handleNumberGuessInput(c tele.Context, room *game_manager.Room
 
 	result := numberGuessResult(target, guess)
 	guessName := room.NameFor(c.Sender().ID)
-	msg := fmt.Sprintf("🔢 حدس %s: %s\n%s", guessName, guess, result)
+	msg := fmt.Sprintf("%s\n🔢 حدس %s: %s\n%s", wordGameSummary(game), guessName, guess, result)
 	if guess == target {
 		msg += fmt.Sprintf("\n\n🏆 %s عدد حریف را کامل حدس زد و برنده شد!", guessName)
 		h.bot.Send(room.Player1, msg, h.menuKeyboardFor(room.Player1.ID))
@@ -899,7 +898,7 @@ func (h *Handler) sendWordGameStatus(room *game_manager.Room, game *word_guess.G
 
 func (h *Handler) wordStatusForPlayer(room *game_manager.Room, game *word_guess.GameWordGuess, playerID int64) string {
 	if game.Type == "num" {
-		return fmt.Sprintf(messages.GameWordReady, fmt.Sprintf("🔢 حالت عددی\nطول عدد: %d رقم\nنوبت فعلی: %s\n\nدر نوبت خود حدس کامل را به صورت پیام متنی ارسال کنید.", game.TargetLength, room.NameFor(game.CurrentTurn)))
+		return fmt.Sprintf(messages.GameWordReady, fmt.Sprintf("%s\n%s\n\nدر نوبت خود حدس کامل را به صورت پیام متنی ارسال کنید.", wordGameSummary(game), wordTurnLine(room, game)))
 	}
 	display := game.P1Display
 	wrong := game.P1Wrong
@@ -911,8 +910,78 @@ func (h *Handler) wordStatusForPlayer(room *game_manager.Room, game *word_guess.
 	if len(wrong) > 0 {
 		wrongText = strings.Join(wrong, "، ")
 	}
-	body := fmt.Sprintf("کلمه حریف: %s\nحروف اشتباه شما: %s\nنوبت فعلی: %s\n\nاگر نوبت شماست، یک حرف انتخاب کنید.", display, wrongText, room.NameFor(game.CurrentTurn))
+	body := fmt.Sprintf("%s\nکلمه حریف: %s\nحروف اشتباه شما: %s\n%s\n\nاگر نوبت شماست، یک حرف انتخاب کنید یا فقط همان یک حرف را به صورت پیام متنی بفرستید.", wordGameSummary(game), display, wrongText, wordTurnLine(room, game))
 	return fmt.Sprintf(messages.GameWordReady, body)
+}
+
+
+func (h *Handler) handleWordGuessTextInput(c tele.Context, room *game_manager.Room, game *word_guess.GameWordGuess, text string) error {
+	if c.Sender().ID != game.CurrentTurn {
+		return editOrSend(c, fmt.Sprintf("⏳ نوبت شما نیست. %s", wordTurnLine(room, game)))
+	}
+	char := normalizeSecretInput(game.Type, text)
+	if len([]rune(char)) != 1 || !isValidSecretForType(game.Type, char) {
+		return editOrSend(c, fmt.Sprintf("❌ حدس نامعتبر است.\n%s\nدر حالت کلمه باید دقیقاً یک حرف معتبر بفرستید یا از کیبورد حروف استفاده کنید.", wordGameSummary(game)))
+	}
+	if alreadyWordGuessed(game, c.Sender().ID, char, room) {
+		return editOrSend(c, "این حرف قبلاً انتخاب شده است.")
+	}
+
+	found := applyWordLetterGuess(game, c.Sender().ID, char, room)
+	resultText := "❌ این حرف در کلمه حریف نیست."
+	if found {
+		resultText = "✅ درست بود!"
+	}
+
+	if wordPlayerHasWon(game, c.Sender().ID, room) {
+		winnerName := room.NameFor(c.Sender().ID)
+		loser := room.Player1
+		if c.Sender().ID == room.Player1.ID && room.Player2 != nil {
+			loser = room.Player2
+		}
+		h.bot.Send(c.Sender(), fmt.Sprintf("🎉 تبریک! کلمه حریف را کامل حدس زدی و برنده شدی.\n%s\nبرنده: %s", wordGameSummary(game), winnerName), h.menuKeyboardFor(c.Sender().ID))
+		if loser.ID != c.Sender().ID {
+			h.bot.Send(loser, fmt.Sprintf("💀 حریف کلمه شما را کامل حدس زد.\n%s\nبرنده: %s", wordGameSummary(game), winnerName), h.menuKeyboardFor(loser.ID))
+			h.redis.ClearUserState(loser.ID)
+		}
+		h.redis.ClearUserState(c.Sender().ID)
+		h.rooms.RemoveRoomByRoomID(room.ID)
+		return nil
+	}
+
+	switchWordTurn(game, room)
+	h.rooms.SaveRoom(room)
+	h.bot.Send(c.Sender(), resultText)
+	h.sendWordGameStatus(room, game)
+	return nil
+}
+
+func wordGameTypeLabel(gameType string) string {
+	switch gameType {
+	case "num":
+		return "🔢 نوع بازی: عدد"
+	case "fa":
+		return "📝 نوع بازی: کلمه فارسی"
+	case "en":
+		return "📝 نوع بازی: کلمه انگلیسی"
+	default:
+		return "🎮 نوع بازی: نامشخص"
+	}
+}
+
+func wordGameUnit(gameType string) string {
+	if gameType == "num" {
+		return "رقم"
+	}
+	return "کاراکتر"
+}
+
+func wordGameSummary(game *word_guess.GameWordGuess) string {
+	return fmt.Sprintf("%s\n📏 تعداد لازم: %d %s", wordGameTypeLabel(game.Type), game.TargetLength, wordGameUnit(game.Type))
+}
+
+func wordTurnLine(room *game_manager.Room, game *word_guess.GameWordGuess) string {
+	return fmt.Sprintf("نوبت فعلی: %s", room.NameFor(game.CurrentTurn))
 }
 
 func switchWordTurn(game *word_guess.GameWordGuess, room *game_manager.Room) {
@@ -1001,15 +1070,23 @@ func displayContainsLetter(display, char string) bool {
 
 func normalizeSecretInput(gameType, text string) string {
 	text = strings.TrimSpace(text)
-	if gameType == "en" || gameType == "num" {
+	switch gameType {
+	case "num":
+		text = strings.NewReplacer(
+			"۰", "0", "۱", "1", "۲", "2", "۳", "3", "۴", "4", "۵", "5", "۶", "6", "۷", "7", "۸", "8", "۹", "9",
+			"٠", "0", "١", "1", "٢", "2", "٣", "3", "٤", "4", "٥", "5", "٦", "6", "٧", "7", "٨", "8", "٩", "9",
+		).Replace(text)
+	case "en":
 		text = strings.ToLower(text)
+	case "fa":
+		text = strings.NewReplacer("ي", "ی", "ى", "ی", "ك", "ک", "ة", "ه", "ۀ", "ه").Replace(text)
 	}
 	return text
 }
 
 func isValidSecretForType(gameType, text string) bool {
 	l := len([]rune(text))
-	if l < 3 || l > 12 || strings.Contains(text, " ") {
+	if l < 1 || l > 12 || strings.ContainsAny(text, " \t\n\r") {
 		return false
 	}
 	for _, r := range text {
@@ -1023,7 +1100,7 @@ func isValidSecretForType(gameType, text string) bool {
 				return false
 			}
 		case "fa":
-			if !((r >= 0x0600 && r <= 0x06FF) || r == 'آ') {
+			if !unicode.IsLetter(r) || !((r >= 0x0600 && r <= 0x06FF) || (r >= 0x0750 && r <= 0x077F) || r == 'آ') {
 				return false
 			}
 		default:

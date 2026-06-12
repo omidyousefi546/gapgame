@@ -21,6 +21,17 @@ func (g *GameDoozClassic) GameType() string {
 	return "gameDoozClassic"
 }
 
+func (g *GameDoozClassic) IsDraw() bool {
+	for _, row := range g.Board {
+		for _, cell := range row {
+			if cell == 0 {
+				return false
+			}
+		}
+	}
+	return true
+}
+
 func (g *GameDoozClassic) CheckWin(x, y, markNumber int) bool {
 
 	directions := [][]int{
@@ -141,6 +152,18 @@ func (g *GameDoozClassic) MakeMove(
 				ChatID:    room.Player1.ID,
 			}, fmt.Sprintf(messages.GameLoseWithName, room.NameFor(room.Player2.ID)), boardDoozClassicKeyboardDisabled(&g.Board))
 		}
+		room.Reset()
+		return true
+	} else if g.IsDraw() {
+		drawMsg := "🤝 بازی مساوی شد! همه خانه‌ها پر شدند و هیچ بازیکنی برنده نشد."
+		b.Edit(&tele.StoredMessage{
+			MessageID: strconv.Itoa(room.MsgID1),
+			ChatID:    room.Player1.ID,
+		}, drawMsg, boardDoozClassicKeyboardDisabled(&g.Board))
+		b.Edit(&tele.StoredMessage{
+			MessageID: strconv.Itoa(room.MsgID2),
+			ChatID:    room.Player2.ID,
+		}, drawMsg, boardDoozClassicKeyboardDisabled(&g.Board))
 		room.Reset()
 		return true
 	} else {
