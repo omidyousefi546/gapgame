@@ -97,7 +97,24 @@ func (g *GameDooz4Normal) MakeMove(
 		mark = "🔴"
 	}
 
-	g.Board[y][x] = markNumber
+	// اضافه کردن منطق جاذبه (پر شدن از پایین)
+	found := false
+	for i := 0; i < 7; i++ {
+		if g.Board[y][6-i] == 0 {
+			x = 6 - i
+			g.Board[y][x] = markNumber
+			found = true
+			break
+		}
+	}
+
+	if !found {
+		c.Respond(&tele.CallbackResponse{
+			Text: "این ستون پر شده است!",
+		})
+		return false
+	}
+
 	var user string
 
 	if room.Turn == room.Player1.ID {

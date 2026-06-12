@@ -145,6 +145,17 @@ func (h *Handler) joinQueue(c tele.Context, u *user.User, filter string, cost in
 		}
 	}
 
+	// ✅ مرحله 3: ارسال پیام "در حال جستجو"
+	// ابتدا پیام قبلی (منو) را حذف می‌کنیم تا صفحه خلوت شود و مطمئن شویم پیام جدید شناسه دارد
+	if c.Callback() != nil {
+		_ = h.bot.Delete(c.Message())
+	}
+
+	msg, err := h.bot.Send(c.Recipient(), "🔍 در حال جستجو...\nمنتظر بمون تا یه نفر پیدا بشه!", WaitingKeyboard())
+	if err != nil {
+		h.log.Error("error sending search message", zap.Error(err))
+	}
+
 	entry := &session.QueueEntry{
 		TelegramID: u.TelegramID,
 		Gender:     string(u.Gender),
@@ -154,22 +165,31 @@ func (h *Handler) joinQueue(c tele.Context, u *user.User, filter string, cost in
 		Lat:        u.Latitude,
 		Lon:        u.Longitude,
 	}
+	if msg != nil {
+		entry.MessageID = msg.ID
+	}
 
-	// ✅ مرحله 3: عضویت در صف + علامت‌گذاری
+	// ✅ مرحله 4: عضویت در صف + علامت‌گذاری
 	if err := h.redis.EnqueueChat(ctx, entry); err != nil {
 		// برگشت سکه اگه enqueue خطا داد
 		if cost > 0 {
 			h.users.AwardCoinsByTelegramID(u.TelegramID, cost, "enqueue_error")
 		}
+		if msg != nil {
+			h.bot.Delete(msg)
+		}
 		return c.Send("❌ خطا در ورود به صف")
 	}
 
-	// ✅ مرحله 4: علامت‌گذاری کاربر به‌عنوان "در صف"
+	// ✅ مرحله 5: علامت‌گذاری کاربر به‌عنوان "در صف"
 	if err := h.redis.JoinQueue(u.TelegramID); err != nil {
+		if msg != nil {
+			h.bot.Delete(msg)
+		}
 		return c.Send("❌ خطا در ورود به صف")
 	}
 
-	return c.Send("🔍 در حال جستجو...\nمنتظر بمون تا یه نفر پیدا بشه!", WaitingKeyboard())
+	return nil
 }
 
 func (h *Handler) ViewChatProfileHandler(c tele.Context) error {

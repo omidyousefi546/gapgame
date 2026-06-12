@@ -122,6 +122,37 @@ func (h *Handler) TextHandler(c tele.Context) error {
 	ctx, cancel := utils.NewRequestContext()
 	defer cancel()
 	if cs, err := h.redis.GetActiveChat(ctx, u.TelegramID); err == nil && cs != nil {
+		// بازی حدس کلمه - چک کردن اینکه آیا کاربر باید کلمه را تعیین کند
+		room := h.rooms.GetRoomByPlayerID(u.TelegramID)
+		if room != nil {
+			if game, ok := room.State.(*word_guess.GameWordGuess); ok {
+				if game.State == word_guess.StateWaitingForWord && game.CreatorID == u.TelegramID {
+					word := strings.ToLower(strings.TrimSpace(text))
+					if len([]rune(word)) < 3 || len([]rune(word)) > 6 {
+						return c.Send("❌ طول کلمه باید بین ۳ تا ۶ کاراکتر باشد.")
+					}
+
+					game.TargetWord = word
+					display := ""
+					for range []rune(word) {
+						display += "_ "
+					}
+					game.DisplayWord = strings.TrimSpace(display)
+					game.State = word_guess.StatePlaying
+					game.MaxTries = 6
+
+					h.rooms.SaveRoom(room)
+
+					h.bot.Send(c.Sender(), "✅ کلمه ثبت شد. بازی شروع شد!")
+
+					msg := fmt.Sprintf("🎮 حریفت کلمه رو انتخاب کرد!\n\nکلمه: %s\n\nحروف یا اعداد رو حدس بزن:", game.DisplayWord)
+					kb := boardWordGuessKeyboard(game)
+					h.bot.Send(&tele.User{ID: game.GuesserID}, msg, kb)
+					return nil
+				}
+			}
+		}
+
 		// Forward message to partner
 		return h.forwardTextToPartner(c, u, cs, text)
 	}

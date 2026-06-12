@@ -219,11 +219,11 @@ func (w *OptimizedMatchWorker) createMatch(ctx context.Context, user1, user2 *se
 	w.removeFromQueue(ctxWithTimeout, user1.TelegramID)
 	w.removeFromQueue(ctxWithTimeout, user2.TelegramID)
 
-	const msg = "👀 پیدا شد! متصل شدی. به مخاطبت سلام بده 🗣️"
+	const msgText = "👀 پیدا شد! متصل شدی. به مخاطبت سلام بده 🗣️"
 	kb := ActiveChatKeyboard()
 
-	w.handler.bot.Send(&tele.User{ID: user1.TelegramID}, msg, kb)
-	w.handler.bot.Send(&tele.User{ID: user2.TelegramID}, msg, kb)
+	w.sendOrDelete(user1.TelegramID, user1.MessageID, msgText, kb)
+	w.sendOrDelete(user2.TelegramID, user2.MessageID, msgText, kb)
 
 	w.log.Info("[MatchWorker] Users matched successfully",
 		zap.Int64("user1", user1.TelegramID),
@@ -244,4 +244,31 @@ func (w *OptimizedMatchWorker) removeFromQueue(ctx context.Context, userID int64
 
 	// Also remove waiting state
 	w.handler.redis.RemoveWaitingState(ctxWithTimeout, userID)
+}
+
+func (w *OptimizedMatchWorker) sendOrDelete(userID int64, messageID int, text string, kb *tele.ReplyMarkup) {
+	user := &tele.User{ID: userID}
+	if messageID != 0 {
+		msg := &tele.Message{ID: messageID, Chat: &tele.Chat{ID: userID}}
+		// حذف پیام جستجو و دکمه لغو
+		err := w.handler.bot.Delete(msg)
+		if err != nil {
+			w.log.Warn("[MatchWorker] failed to delete searching message", 
+				zap.Error(err), 
+				zap.Int64("user_id", userID), 
+				zap.Int("message_id", messageID))
+		} else {
+			w.log.Info("[MatchWorker] successfully deleted searching message", 
+				zap.Int64("user_id", userID), 
+				zap.Int("message_id", messageID))
+		}
+	} else {
+		w.log.Warn("[MatchWorker] messageID is 0, cannot delete searching message", 
+			zap.Int64("user_id", userID))
+	}
+	// ارسال پیام شروع چت و کیبورد مدیریت چت
+	_, err := w.handler.bot.Send(user, text, kb)
+	if err != nil {
+		w.log.Error("[MatchWorker] failed to send match message", zap.Error(err), zap.Int64("user_id", userID))
+	}
 }

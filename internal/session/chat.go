@@ -23,6 +23,7 @@ type QueueEntry struct {
 	Cost       int       `json:"cost"`
 	Lat        *float64  `json:"lat,omitempty"`
 	Lon        *float64  `json:"lon,omitempty"`
+	MessageID  int       `json:"message_id,omitempty"`
 }
 
 type ChatSession struct {

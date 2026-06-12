@@ -53,7 +53,7 @@ func main() {
 
 	sessionManager := session.NewManager(rdb)
 	userService := service.NewUserService(userRepo, userRepoOpt, sessionManager)
-	roomManager := game_manager.NewRoomManager()
+	roomManager := game_manager.NewRoomManager(rdb)
 
 	// Initialize handler
 	h := bot.New(b, userService, sessionManager, userRepo, roomManager, appLog)

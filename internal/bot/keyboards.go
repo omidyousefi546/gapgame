@@ -446,9 +446,9 @@ func NearbyMenuKeyboard(hasGPS bool) *tele.ReplyMarkup {
 }
 
 func ActiveChatKeyboard() *tele.ReplyMarkup {
-	menu := &tele.ReplyMarkup{}
+	menu := &tele.ReplyMarkup{ResizeKeyboard: true}
 	menu.Reply(
-		menu.Row(btnViewChatProfile),
+		menu.Row(btnViewChatProfile, btnChatGame),
 		menu.Row(btnEndChat),
 	)
 	return menu
@@ -469,6 +469,26 @@ func WaitingKeyboard() *tele.ReplyMarkup {
 	menu := &tele.ReplyMarkup{}
 	menu.Inline(
 		menu.Row(tele.Btn{Unique: "cancel_queue", Text: "❌ لغو جستجو"}),
+	)
+	return menu
+}
+
+func ChatGameMenuKeyboard() *tele.ReplyMarkup {
+	menu := &tele.ReplyMarkup{}
+	menu.Inline(
+		menu.Row(btnChatGameRPS, btnChatGameWord),
+		menu.Row(btnChatGameDooz4, btnChatGameDoozClass),
+	)
+	return menu
+}
+
+func ChatGameRequestKeyboard(gameType string) *tele.ReplyMarkup {
+	menu := &tele.ReplyMarkup{}
+	menu.Inline(
+		menu.Row(
+			tele.Btn{Unique: "cgame_acc", Text: "✅ قبول", Data: gameType},
+			tele.Btn{Unique: "cgame_rej", Text: "❌ رد", Data: gameType},
+		),
 	)
 	return menu
 }
@@ -516,7 +536,7 @@ func AfterGameMenuKeyboard() *tele.ReplyMarkup {
 }
 
 // ///////////////////////////////////////////// game keyboard
-func boardDooz4Keyboard(Board *[7][7]int) *tele.ReplyMarkup {
+func boardDooz4Keyboard(Board *[7][7]int, unique string) *tele.ReplyMarkup {
 
 	m := &tele.ReplyMarkup{}
 	row := [][]tele.Btn{}
@@ -537,7 +557,7 @@ func boardDooz4Keyboard(Board *[7][7]int) *tele.ReplyMarkup {
 				emoji = "🔵"
 			}
 
-			btn := m.Data(emoji, "game_dooz4_gravity", fmt.Sprintf("%d-%d", r, c))
+			btn := m.Data(emoji, unique, fmt.Sprintf("%d-%d", r, c))
 
 			col = append(col, btn)
 		}

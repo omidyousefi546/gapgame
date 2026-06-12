@@ -173,6 +173,7 @@ var (
 	btnNearbyAll    = tele.Btn{Unique: "ntype", Data: "nearby_all"}
 
 	btnViewChatProfile = tele.Btn{Text: "👥•• مشاهده پروفایل این مخاطب"}
+	btnChatGame        = tele.Btn{Text: "🎮 بازی با مخاطب"}
 	btnEndChat         = tele.Btn{Text: "پایان چت"}
 	btnConfirmEndChat  = tele.Btn{Unique: "confirm_end_chat"}
 	btnCancelEndChat   = tele.Btn{Unique: "cancel_end_chat"}
@@ -202,6 +203,13 @@ var (
 	btnRepeatGame = tele.Btn{Unique: "repeatGame", Text: "بازی مجدد"}
 	btnNewGame    = tele.Btn{Unique: "newGame", Text: "انتخاب بازی"}
 	btnCancelGame = tele.Btn{Unique: "cancelGame", Text: "اتمام بازی"}
+)
+
+var (
+	btnChatGameRPS       = tele.Btn{Unique: "cgame_req", Text: "🪨✂️🧻 سنگ کاغذ قیچی", Data: "rps"}
+	btnChatGameWord      = tele.Btn{Unique: "cgame_req", Text: "📝 حدس کلمه", Data: "word"}
+	btnChatGameDooz4     = tele.Btn{Unique: "cgame_req", Text: "🔴 دوز ۴ تایی", Data: "dooz4"}
+	btnChatGameDoozClass = tele.Btn{Unique: "cgame_req", Text: "❌ دوز کلاسیک", Data: "dooz3"}
 )
 
 // Keyboards

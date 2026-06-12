@@ -1,7 +1,12 @@
 package bot
 
 import (
+	"GapGame/internal/game/dare_and_truth"
+	"GapGame/internal/game/dooz4"
+	"GapGame/internal/game/dooz_classic"
 	"GapGame/internal/game/game_manager"
+	"GapGame/internal/game/rps"
+	"GapGame/internal/game/word_guess"
 	"GapGame/internal/service"
 	"GapGame/internal/session"
 	"GapGame/internal/user"
@@ -31,6 +36,13 @@ type Handler struct {
 var rateLimitDuration = time.Second
 
 func New(b *tele.Bot, userService *service.UserService, sm *session.Manager, repo *user.Repository, rm *game_manager.RoomManager, log *zap.Logger) *Handler {
+	rm.RegisterGameState("gameDooz4Gravity", func() game_manager.GameState { return &dooz4.GameDooz4{} })
+	rm.RegisterGameState("gameDooz4Normal", func() game_manager.GameState { return &dooz4.GameDooz4Normal{} })
+	rm.RegisterGameState("gameDoozClassic", func() game_manager.GameState { return &dooz_classic.GameDoozClassic{} })
+	rm.RegisterGameState("gameDareAndTruth", func() game_manager.GameState { return &dare_and_truth.GameDareTruth{} })
+	rm.RegisterGameState("gameRPS", func() game_manager.GameState { return &rps.GameRPS{} })
+	rm.RegisterGameState("gameWordGuess", func() game_manager.GameState { return &word_guess.GameWordGuess{} })
+
 	return &Handler{
 		bot:   b,
 		users: userService,
@@ -102,6 +114,8 @@ func (h *Handler) RegisterHandlers() {
 	h.bot.Handle(&btnCoins, h.CoinsHandler)
 
 	h.bot.Handle(&btnInvite, h.InviteHandler)
+
+	h.bot.Handle(&btnChatGame, h.ChatGameHandler)
 
 	h.bot.Handle(&btnHelp, h.HelpHandler)
 
@@ -210,8 +224,13 @@ func (h *Handler) RegisterHandlers() {
 	h.bot.Handle(&btnCancelEndChat, h.CancelEndChatHandler)
 	h.bot.Handle(&btnCancelQueue, h.CancelQueueHandler)
 
+	h.bot.Handle("\fcgame_req", h.ChatGameRequestCallback)
+	h.bot.Handle("\fcgame_acc", h.ChatGameAcceptCallback)
+	h.bot.Handle("\fcgame_rej", h.ChatGameRejectCallback)
+
 	// Game
 
+	h.bot.Handle(&btnNewGame, h.showGamesHandler)
 	h.bot.Handle("\fgame_select", h.selectGameHandler)
 	h.bot.Handle(&btnFinishGame, h.finishGameHandler)
 	h.bot.Handle(&btnDeclineFinishGame, h.declineFinishGame)
@@ -219,8 +238,13 @@ func (h *Handler) RegisterHandlers() {
 	h.bot.Handle(&btnRepeatGame, h.repeatGameHandler)
 	h.bot.Handle(&btnCancelGame, h.cancelGameHandler)
 	h.bot.Handle("\fgame_dooz4_gravity", h.moveDooz4GravityHandler)
+	h.bot.Handle("\fgame_dooz4_normal", h.moveDooz4NormalHandler)
 	h.bot.Handle("\fgame_dooz_classic", h.moveDoozClassicHandler)
 	h.bot.Handle("\fgame_dare_and_truth", h.moveDareAndTruthHandler)
+	h.bot.Handle("\fmove_rps", h.moveRPSHandler)
+	h.bot.Handle("\fword_type", h.wordTypeHandler)
+	h.bot.Handle("\fword_guess", h.wordGuessMoveHandler)
+
 	// // Message types
 
 	h.bot.Handle(tele.OnText, h.TextHandler)
