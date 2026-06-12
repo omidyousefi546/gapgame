@@ -124,24 +124,32 @@ func (h *Handler) TextHandler(c tele.Context) error {
 		return h.HandleAddContactLabel(c)
 	}
 
-	// Forward in active chat session
-	ctx, cancel := utils.NewRequestContext()
-	defer cancel()
-	if cs, err := h.redis.GetActiveChat(ctx, u.TelegramID); err == nil && cs != nil {
-		// In-chat word/number guessing game messages must be handled by the
-		// game system first so secrets and numeric guesses are not forwarded to
-		// the anonymous chat partner.
-		room := h.rooms.GetRoomByPlayerID(u.TelegramID)
-		if room != nil {
-			if game, ok := room.State.(*word_guess.GameWordGuess); ok {
-				if handled, err := h.handleWordGameText(c, room, game, text); handled {
-					return err
-				}
+	// Forward in active chat session or game room
+	room := h.rooms.GetRoomByPlayerID(u.TelegramID)
+	if room != nil {
+		if game, ok := room.State.(*word_guess.GameWordGuess); ok {
+			if handled, err := h.handleWordGameText(c, room, game, text); handled {
+				return err
 			}
 		}
+	}
 
+	ctx, cancel := utils.NewRequestContext()
+	defer cancel()
+	cs, err := h.redis.GetActiveChat(ctx, u.TelegramID)
+	if err == nil && cs != nil {
 		// Forward message to partner
 		return h.forwardTextToPartner(c, u, cs, text)
+	}
+
+	// If in game room but no active anonymous chat, forward message as chat to the friend
+	if room != nil && room.Player2 != nil {
+		opponentID := room.Player1.ID
+		if u.TelegramID == room.Player1.ID {
+			opponentID = room.Player2.ID
+		}
+		_, err := h.bot.Send(&tele.User{ID: opponentID}, text)
+		return err
 	}
 
 	return editOrSend(c, messages.UseMenu, MainMenuKeyboard())
@@ -167,6 +175,17 @@ func (h *Handler) MediaHandler(c tele.Context) error {
 	cs, err := h.redis.GetActiveChat(ctx, u.TelegramID)
 	if err == nil && cs != nil {
 		return h.forwardMediaToPartner(c, u, cs)
+	}
+
+	// If in play-with-friends game room, forward message as chat to the friend
+	room := h.rooms.GetRoomByPlayerID(u.TelegramID)
+	if room != nil && room.Player2 != nil {
+		opponentID := room.Player1.ID
+		if u.TelegramID == room.Player1.ID {
+			opponentID = room.Player2.ID
+		}
+		_, err := h.bot.Copy(&tele.User{ID: opponentID}, c.Message())
+		return err
 	}
 
 	return editOrSend(c, messages.NeedActiveChatFirst)

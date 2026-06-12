@@ -185,6 +185,8 @@ var (
 	btnGameDooz4Gravity = tele.Btn{Unique: "game_select", Text: "بازی دوز ۴ جاذبه", Data: "game_dooz4_gravity"}
 	btnGameDoozClassic  = tele.Btn{Unique: "game_select", Text: "بازی دوز کلاسیک", Data: "game_dooz_classic"}
 	btnGameDareAndTruth = tele.Btn{Unique: "game_select", Text: "جرات حقیقت", Data: "game_dare_and_truth"}
+	btnGameRPS          = tele.Btn{Unique: "game_select", Text: "سنگ کاغذ قیچی", Data: "game_rps"}
+	btnGameWordGuess    = tele.Btn{Unique: "game_select", Text: "حدس کلمه", Data: "game_word_guess"}
 )
 
 // In Game menu (reply keyboard)

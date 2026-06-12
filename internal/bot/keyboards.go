@@ -504,6 +504,8 @@ func GameMenuKeyboard() *tele.ReplyMarkup {
 		kb.Row(btnGameDooz4Gravity),
 		kb.Row(btnGameDoozClassic),
 		kb.Row(btnGameDareAndTruth),
+		kb.Row(btnGameRPS),
+		kb.Row(btnGameWordGuess),
 	)
 	return kb
 }

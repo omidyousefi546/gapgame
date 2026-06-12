@@ -229,6 +229,10 @@ func (r *Room) StartRoom(b *tele.Bot, keyboard *tele.ReplyMarkup) {
 	var text string
 	if r.State != nil && r.State.GameType() == "gameDareAndTruth" {
 		text = fmt.Sprintf("🎮 برای طرف مقابلت یک مورد را انتخاب کن \nنوبت %v ", r.NameFor(r.Player1.ID))
+	} else if r.State != nil && r.State.GameType() == "gameRPS" {
+		text = "🔄 راند 1 شروع شد. انتخاب خود را بزنید 👇"
+	} else if r.State != nil && r.State.GameType() == "gameWordGuess" {
+		text = "نوع بازی را انتخاب کنید 👇"
 	} else {
 		text = fmt.Sprintf("🎮 بازی شروع شد \nنوبت %v (%v)", r.NameFor(r.Player1.ID), "🔴")
 	}
