@@ -294,11 +294,78 @@ func (h *Handler) moveDoozClassicHandler(c tele.Context) error {
 func (h *Handler) moveDareAndTruthHandler(c tele.Context) error {
 	room := h.rooms.GetRoomByPlayerID(c.Sender().ID)
 	if room == nil {
-		return nil
+		return c.Respond(&tele.CallbackResponse{Text: messages.GameAlreadyEnded})
 	}
-	room.State.(*dare_and_truth.GameDareTruth).MakeMove(h.bot, c, boardDareAndTruthKeyboard(), room, c.Sender(), c.Callback().Data)
+	game, ok := room.State.(*dare_and_truth.GameDareTruth)
+	if !ok {
+		// Stale button from a previous game; never touch another game's state.
+		return c.Respond(&tele.CallbackResponse{Text: messages.GameAlreadyEnded})
+	}
+	game.MakeMove(h.bot, c, boardDareAndTruthKeyboard(), room, c.Sender(), c.Callback().Data)
 	h.rooms.SaveRoom(room)
 	return nil
+}
+
+// endDareAndTruthHandler terminates a truth-or-dare game via the inline
+// «پایان بازی» button. The game has no natural ending, so this is the only
+// proper way to finish it: the room is removed, both players' game states are
+// cleared and each player gets back the reply keyboard that matches their
+// situation (active-chat keyboard inside a chat, main menu otherwise) so the
+// conversation continues normally.
+func (h *Handler) endDareAndTruthHandler(c tele.Context) error {
+	room := h.rooms.GetRoomByPlayerID(c.Sender().ID)
+	if room == nil {
+		// Stale button: strip the dead board, acknowledge and make sure the
+		// user still has a usable reply keyboard.
+		c.Respond(&tele.CallbackResponse{Text: messages.GameAlreadyEnded})
+		if c.Message() != nil {
+			c.Edit(messages.GameAlreadyEnded)
+		}
+		return c.Send(messages.GameAlreadyEnded, h.menuKeyboardFor(c.Sender().ID))
+	}
+	if _, ok := room.State.(*dare_and_truth.GameDareTruth); !ok {
+		// Safety: this button must never end any other game type.
+		return c.Respond(&tele.CallbackResponse{Text: messages.InvalidGame})
+	}
+
+	var opponent *tele.User
+	if room.Player1 != nil && c.Sender().ID == room.Player1.ID {
+		opponent = room.Player2
+	} else {
+		opponent = room.Player1
+	}
+
+	// 1. Remove all game state first so no further moves can race with the cleanup.
+	h.rooms.RemoveRoomByRoomID(room.ID)
+	h.redis.ClearUserState(c.Sender().ID)
+	if opponent != nil {
+		h.redis.ClearUserState(opponent.ID)
+	}
+
+	// 2. Detach the inline board from the opponent's game message so stale
+	//    category buttons cannot be pressed afterwards.
+	if opponent != nil {
+		opponentMsgID := room.MsgID1
+		if room.Player2 != nil && opponent.ID == room.Player2.ID {
+			opponentMsgID = room.MsgID2
+		}
+		if opponentMsgID != 0 {
+			h.bot.Edit(&tele.StoredMessage{
+				MessageID: strconv.Itoa(opponentMsgID),
+				ChatID:    opponent.ID,
+			}, messages.GameDareTruthEndedByOpponent)
+		}
+		// 3. Restore the opponent's correct reply keyboard (chat controls if
+		//    they are still in an anonymous chat, main menu otherwise).
+		h.bot.Send(opponent, messages.GameDareTruthEndedByOpponent, h.menuKeyboardFor(opponent.ID))
+	}
+
+	// 4. Same for the player who pressed the button: replace the board message
+	//    and hand back the proper reply keyboard so chatting continues normally.
+	if c.Message() != nil {
+		c.Edit(messages.GameDareTruthEndedByYou)
+	}
+	return c.Send(messages.GameDareTruthEndedByYou, h.menuKeyboardFor(c.Sender().ID))
 }
 
 func (h *Handler) ChatGameHandler(c tele.Context) error {
@@ -913,7 +980,6 @@ func (h *Handler) wordStatusForPlayer(room *game_manager.Room, game *word_guess.
 	body := fmt.Sprintf("%s\nکلمه حریف: %s\nحروف اشتباه شما: %s\n%s\n\nاگر نوبت شماست، یک حرف انتخاب کنید یا فقط همان یک حرف را به صورت پیام متنی بفرستید.", wordGameSummary(game), display, wrongText, wordTurnLine(room, game))
 	return fmt.Sprintf(messages.GameWordReady, body)
 }
-
 
 func (h *Handler) handleWordGuessTextInput(c tele.Context, room *game_manager.Room, game *word_guess.GameWordGuess, text string) error {
 	if c.Sender().ID != game.CurrentTurn {

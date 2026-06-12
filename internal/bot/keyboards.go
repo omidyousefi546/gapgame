@@ -700,10 +700,16 @@ func boardDareAndTruthKeyboard() *tele.ReplyMarkup {
 	btnTruth18 := m.Data("حقیقت+۱۸", "game_dare_and_truth", "حقیقت+18")
 	btnDare18 := m.Data("جرات+۱۸", "game_dare_and_truth", "جرات+18")
 	btnChance := m.Data("شانسی", "game_dare_and_truth", "شانسی")
+	// Truth-or-dare has no natural win condition, so the board always carries
+	// an explicit «پایان بازی» button that terminates the game cleanly.
+	// Its Unique is intentionally different from "game_dare_and_truth" so it
+	// can never be mistaken for a category move.
+	btnEnd := m.Data("🛑 پایان بازی", "dare_truth_end")
 	m.Inline(
 		m.Row(btnTruth), m.Row(btnDare),
 		m.Row(btnTruth18), m.Row(btnDare18),
 		m.Row(btnChance),
+		m.Row(btnEnd),
 	)
 	return m
 

@@ -82,6 +82,11 @@ type SearchFilter struct {
 	NoChat        bool
 	NewUsers      bool
 
+	// ActiveWithinDays controls the inactivity cut-off: users whose
+	// last_seen_at is older than this many days are never returned.
+	// When <= 0 the repository falls back to DefaultActivityWindowDays.
+	ActiveWithinDays int
+
 	NearbyLat *float64
 	NearbyLng *float64
 	RadiusKM  float64
@@ -90,13 +95,12 @@ type SearchFilter struct {
 }
 
 func (r *Repository) SearchUsers(ctx context.Context, f SearchFilter) ([]User, error) {
-	users, _, err := r.ExecuteSearch(ctx, f)
-	return users, err
+	return r.ExecuteSearch(ctx, f)
 }
 
 // SearchUsersWithTotal returns search results with total count
 func (r *Repository) SearchUsersWithTotal(ctx context.Context, f SearchFilter) ([]User, int64, error) {
-	return r.ExecuteSearch(ctx, f)
+	return r.ExecuteSearchWithTotal(ctx, f)
 }
 
 func calcDistance(lat1, lon1, lat2, lon2 float64) float64 {

@@ -39,21 +39,27 @@ func (ss *SearchService) ExecuteSearch(
 		MaxAge:        0,
 		Offset:        offset,
 		Limit:         limit,
+		// Hide long-inactive users from every search result.
+		ActiveWithinDays: user.DefaultActivityWindowDays,
 	}
 
 	// Build filter based on search type
 	switch searchType {
 	case "age":
-		// Search people within 3 years age difference
+		// Search people within 3 years age difference,
+		// online within the last day (as promised by the UI).
 		age := myUser.SafeAge()
 		filter.MinAge = age - 3
 		filter.MaxAge = age + 3
 		filter.Type = "age"
+		filter.ActiveWithinDays = user.RecentActivityWindowDays
 
 	case "province":
-		// Search people from same province
+		// Search people from same province,
+		// online within the last day (as promised by the UI).
 		filter.Provinces = []string{myUser.Province}
 		filter.Type = "province"
+		filter.ActiveWithinDays = user.RecentActivityWindowDays
 
 	case "new":
 		// Search newly joined users (last 1 hour)
@@ -100,13 +106,14 @@ func (ss *SearchService) ExecuteNearbySearch(
 	defer cancel()
 
 	filter := user.SearchFilter{
-		Gender:        gender,
-		ExcludeUserID: myUser.TelegramID,
-		Offset:        offset,
-		Limit:         limit,
-		NearbyLat:     myUser.Latitude,
-		NearbyLng:     myUser.Longitude,
-		RadiusKM:      30,
+		Gender:           gender,
+		ExcludeUserID:    myUser.TelegramID,
+		Offset:           offset,
+		Limit:            limit,
+		NearbyLat:        myUser.Latitude,
+		NearbyLng:        myUser.Longitude,
+		RadiusKM:         30,
+		ActiveWithinDays: user.DefaultActivityWindowDays,
 	}
 
 	return ss.repo.NearbySearchAdvanced(ctx, *myUser.Latitude, *myUser.Longitude, 30, filter)

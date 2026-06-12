@@ -28,26 +28,29 @@ const (
 )
 
 type User struct {
-	ID                   string `gorm:"primaryKey"`
-	TelegramID           int64  `gorm:"uniqueIndex;not null"`
-	Name                 string `gorm:"type:varchar(100)"`
-	Gender               Gender `gorm:"type:varchar(10)"`
-	Age                  *int
-	Province             string `gorm:"type:varchar(100)"`
-	City                 string `gorm:"type:varchar(100)"`
-	ProfilePhoto         string `gorm:"type:text"`
-	Coins                int    `gorm:"default:0"`
-	Likes                int    `gorm:"default:0"`
-	Latitude             *float64
-	Longitude            *float64
-	ProfileState         ProfileState `gorm:"type:varchar(20);default:'need_gender'"`
+	ID           string `gorm:"primaryKey"`
+	TelegramID   int64  `gorm:"uniqueIndex;not null"`
+	Name         string `gorm:"type:varchar(100)"`
+	Gender       Gender `gorm:"type:varchar(10)"`
+	Age          *int
+	Province     string `gorm:"type:varchar(100)"`
+	City         string `gorm:"type:varchar(100)"`
+	ProfilePhoto string `gorm:"type:text"`
+	Coins        int    `gorm:"default:0"`
+	Likes        int    `gorm:"default:0"`
+	Latitude     *float64
+	Longitude    *float64
+	// idx_users_search backs the hot search path: every search filters on
+	// profile_state = 'complete' AND last_seen_at > cutoff, so a composite
+	// index lets PostgreSQL satisfy both predicates with one range scan.
+	ProfileState         ProfileState `gorm:"type:varchar(20);default:'need_gender';index:idx_users_search,priority:1"`
 	ReceivedProfileBonus bool         `gorm:"default:false"`
 	InviteCount          int
 	DisableLikes         bool `gorm:"default:false"`
 	Banned               bool `gorm:"default:false;index"`
 
 	SilentUntil *time.Time `gorm:"default:null"`
-	LastSeenAt  time.Time  `gorm:"index"`
+	LastSeenAt  time.Time  `gorm:"index;index:idx_users_search,priority:2"`
 	CreatedAt   time.Time
 	UpdatedAt   time.Time
 }

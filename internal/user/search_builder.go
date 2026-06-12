@@ -12,6 +12,27 @@ import (
 	"gorm.io/gorm"
 )
 
+// Activity windows used to keep long-inactive users out of search results.
+const (
+	// DefaultActivityWindowDays is the global cut-off: users not seen within
+	// this many days never appear in any search result.
+	DefaultActivityWindowDays = 7
+
+	// RecentActivityWindowDays is used by searches whose UI promises
+	// «در ۱ روز اخیر آنلاین بوده‌اند» (same-age / same-province lists).
+	RecentActivityWindowDays = 1
+)
+
+// activityWindow resolves the inactivity cut-off for a filter, falling back
+// to the project-wide default when the caller did not specify one.
+func (f SearchFilter) activityWindow() time.Duration {
+	days := f.ActiveWithinDays
+	if days <= 0 {
+		days = DefaultActivityWindowDays
+	}
+	return time.Duration(days) * 24 * time.Hour
+}
+
 // SearchQueryBuilder builds complex user search queries
 type SearchQueryBuilder struct {
 	db   *gorm.DB
@@ -37,12 +58,22 @@ func (sqb *SearchQueryBuilder) WithBasicFilters(excludeUserID int64) *SearchQuer
 	// Exclude self
 	sqb.q = sqb.q.Where("telegram_id != ?", excludeUserID)
 
-	// Only complete profiles
+	// Only complete, non-banned profiles
 	sqb.q = sqb.q.Where("profile_state = ?", StateComplete)
+	sqb.q = sqb.q.Where("banned = ?", false)
 
-	// Only users active in the last 30 days (more reasonable for searches)
-	sqb.q = sqb.q.Where("last_seen_at > ?", time.Now().Add(-30*24*time.Hour))
+	return sqb
+}
 
+// WithActivityWindow excludes users whose last activity is older than the
+// given window. Every search MUST apply this so long-inactive users never
+// show up in results. last_seen_at is indexed, so this predicate is a cheap
+// range scan rather than a full table walk.
+func (sqb *SearchQueryBuilder) WithActivityWindow(window time.Duration) *SearchQueryBuilder {
+	if window <= 0 {
+		window = DefaultActivityWindowDays * 24 * time.Hour
+	}
+	sqb.q = sqb.q.Where("last_seen_at > ?", time.Now().Add(-window))
 	return sqb
 }
 
@@ -138,24 +169,21 @@ func (sqb *SearchQueryBuilder) WithNewUsers(hoursBack int) *SearchQueryBuilder {
 	return sqb
 }
 
-// WithoutBlocked excludes users blocked by the searcher
-func (sqb *SearchQueryBuilder) WithoutBlocked(blockerID int64) *SearchQueryBuilder {
-	sqb.q = sqb.q.Where("telegram_id NOT IN (SELECT blocked_id FROM blocks WHERE blocker_id = ?)", blockerID)
+// WithoutBlocked excludes blocked relations in BOTH directions:
+// users the searcher has blocked, and users who have blocked the searcher.
+// NOT EXISTS lets PostgreSQL use an anti-join on the (blocker_id, blocked_id)
+// unique index instead of materialising a NOT IN list.
+func (sqb *SearchQueryBuilder) WithoutBlocked(searcherID int64) *SearchQueryBuilder {
+	sqb.q = sqb.q.Where(
+		"NOT EXISTS (SELECT 1 FROM blocks b WHERE (b.blocker_id = ? AND b.blocked_id = users.telegram_id) OR (b.blocker_id = users.telegram_id AND b.blocked_id = ?))",
+		searcherID, searcherID,
+	)
 	return sqb
 }
 
 // WithHasGPS filters only users with GPS coordinates
 func (sqb *SearchQueryBuilder) WithHasGPS() *SearchQueryBuilder {
 	sqb.q = sqb.q.Where("latitude IS NOT NULL AND longitude IS NOT NULL")
-	return sqb
-}
-
-// WithoutChats filters users who haven't chatted before (or long time ago)
-func (sqb *SearchQueryBuilder) WithoutChats(daysBack int) *SearchQueryBuilder {
-	if daysBack > 0 {
-		sqb.q = sqb.q.Where("(last_seen_at IS NULL OR last_seen_at < ?)",
-			time.Now().Add(-time.Duration(daysBack)*24*time.Hour))
-	}
 	return sqb
 }
 
@@ -209,41 +237,13 @@ func (sqb *SearchQueryBuilder) Build() ([]User, error) {
 
 	var users []User
 	if err := sqb.q.Find(&users).Error; err != nil {
-		sqb.log.Error("search query failed",
-			zap.Error(err),
-		)
+		if sqb.log != nil {
+			sqb.log.Error("search query failed", zap.Error(err))
+		}
 		return nil, fmt.Errorf("search failed: %w", err)
 	}
 
 	return users, nil
-}
-
-// BuildWithTotal executes the query and returns results with total count
-func (sqb *SearchQueryBuilder) BuildWithTotal() ([]User, int64, error) {
-	if len(sqb.errs) > 0 {
-		return nil, 0, sqb.errs[0]
-	}
-
-	var total int64
-	var users []User
-
-	// Get total count before pagination
-	// IMPORTANT: Must use Model(&User{}) to specify table and preserve WHERE clauses
-	if err := sqb.q.Model(&User{}).Count(&total).Error; err != nil {
-		if sqb.log != nil {
-			sqb.log.Error("count query failed", zap.Error(err))
-		}
-		return nil, 0, fmt.Errorf("count failed: %w", err)
-	}
-
-	if err := sqb.q.Find(&users).Error; err != nil {
-		if sqb.log != nil {
-			sqb.log.Error("search query failed", zap.Error(err))
-		}
-		return nil, 0, fmt.Errorf("search failed: %w", err)
-	}
-
-	return users, total, nil
 }
 
 // GeoSearchResult represents a user with distance information
@@ -264,22 +264,24 @@ func (r *Repository) NearbySearch(
 	latDelta := radiusKM / 111.0
 	lngDelta := radiusKM / (111.0 * math.Cos(userLat*math.Pi/180))
 
-	var candidates []User
+	// Get candidates within bounding box. The shared builder guarantees the
+	// same correctness rules as every other search (complete profile, not
+	// banned, activity window, two-way block filter).
+	sqb := NewSearchQueryBuilder(r.db, ctx, nil).
+		SelectFields().
+		WithBasicFilters(excludeUserID).
+		WithActivityWindow(DefaultActivityWindowDays * 24 * time.Hour).
+		WithoutBlocked(excludeUserID).
+		WithHasGPS()
 
-	// Get candidates within bounding box
-	q := r.db.WithContext(ctx).
-		Where("telegram_id != ?", excludeUserID).
-		Where("profile_state = ?", StateComplete).
-		Where("last_seen_at > ?", time.Now().Add(-6*24*time.Hour)).
-		Where("latitude IS NOT NULL AND longitude IS NOT NULL").
+	sqb.q = sqb.q.
 		Where("latitude BETWEEN ? AND ?", userLat-latDelta, userLat+latDelta).
 		Where("longitude BETWEEN ? AND ?", userLng-lngDelta, userLng+lngDelta).
-		Where("telegram_id NOT IN (SELECT blocked_id FROM blocks WHERE blocker_id = ?)", excludeUserID).
-		Limit(maxResults * 2). // Get more than needed for filtering
-		Find(&candidates)
+		Limit(maxResults * 2) // bounding box over-fetch; exact distance filter below
 
-	if q.Error != nil {
-		return nil, fmt.Errorf("nearby search failed: %w", q.Error)
+	candidates, err := sqb.Build()
+	if err != nil {
+		return nil, fmt.Errorf("nearby search failed: %w", err)
 	}
 
 	// Calculate exact distances and filter
@@ -325,6 +327,7 @@ func (r *Repository) NearbySearchAdvanced(
 	sqb := NewSearchQueryBuilder(r.db, ctx, nil).
 		SelectFields().
 		WithBasicFilters(filter.ExcludeUserID).
+		WithActivityWindow(filter.activityWindow()).
 		WithoutBlocked(filter.ExcludeUserID).
 		WithHasGPS()
 
@@ -346,7 +349,17 @@ func (r *Repository) NearbySearchAdvanced(
 		sqb = sqb.WithProvince(filter.Provinces...)
 	}
 
-	filter.Limit = filter.Limit * 2 // Get more candidates for distance filtering
+	// Pagination is applied AFTER the exact-distance sort below, so the DB
+	// query must cover the whole requested window (offset + limit), plus a
+	// buffer because the rectangular bounding box over-approximates the
+	// circular radius.
+	if filter.Limit <= 0 {
+		filter.Limit = 20
+	}
+	if filter.Offset < 0 {
+		filter.Offset = 0
+	}
+	sqb.q = sqb.q.Limit((filter.Offset + filter.Limit) * 2)
 
 	// Get candidates
 	candidates, err := sqb.Build()
@@ -389,11 +402,15 @@ func (r *Repository) NearbySearchAdvanced(
 	return results[start:end], nil
 }
 
-// ExecuteSearch executes a complex search with all filters applied correctly
-func (r *Repository) ExecuteSearch(ctx context.Context, f SearchFilter) ([]User, int64, error) {
+// buildSearchQuery assembles the shared filter pipeline for a SearchFilter.
+// Keeping it in one place guarantees every entry point (paged list search,
+// count, geo pre-filter) applies the same correctness rules — most
+// importantly the activity window that hides long-inactive users.
+func (r *Repository) buildSearchQuery(ctx context.Context, f SearchFilter) *SearchQueryBuilder {
 	sqb := NewSearchQueryBuilder(r.db, ctx, nil).
 		SelectFields().
 		WithBasicFilters(f.ExcludeUserID).
+		WithActivityWindow(f.activityWindow()).
 		WithoutBlocked(f.ExcludeUserID)
 
 	// Apply optional filters
@@ -413,6 +430,29 @@ func (r *Repository) ExecuteSearch(ctx context.Context, f SearchFilter) ([]User,
 		sqb = sqb.WithNewUsers(1) // Users created in last 1 hour
 	}
 
+	// Geographic filter ("nearby" search). Previously these fields were
+	// silently ignored by ExecuteSearch, so the nearby list contained random
+	// far-away users. An indexed bounding-box pre-filter is applied here;
+	// callers that need exact circular distances use NearbySearchAdvanced.
+	if f.NearbyLat != nil && f.NearbyLng != nil && f.RadiusKM > 0 {
+		latDelta := f.RadiusKM / 111.0
+		lngDelta := f.RadiusKM / (111.0 * math.Cos(*f.NearbyLat*math.Pi/180))
+		sqb = sqb.WithHasGPS()
+		sqb.q = sqb.q.
+			Where("latitude BETWEEN ? AND ?", *f.NearbyLat-latDelta, *f.NearbyLat+latDelta).
+			Where("longitude BETWEEN ? AND ?", *f.NearbyLng-lngDelta, *f.NearbyLng+lngDelta)
+	}
+
+	return sqb
+}
+
+// ExecuteSearch executes a complex search with all filters applied correctly.
+// It runs a single SELECT (no COUNT round-trip); paging UIs detect «has more»
+// by comparing len(results) with the page size, which scales much better
+// than COUNT(*) on a large users table.
+func (r *Repository) ExecuteSearch(ctx context.Context, f SearchFilter) ([]User, error) {
+	sqb := r.buildSearchQuery(ctx, f)
+
 	// Apply sorting
 	switch f.Type {
 	case "newest":
@@ -425,5 +465,25 @@ func (r *Repository) ExecuteSearch(ctx context.Context, f SearchFilter) ([]User,
 
 	// Apply pagination
 	sqb = sqb.Paginate(f.Offset, f.Limit)
-	return sqb.BuildWithTotal()
+	return sqb.Build()
+}
+
+// ExecuteSearchWithTotal is the same search plus a COUNT(*) for callers that
+// genuinely need the total. The count runs on a separate, pagination-free
+// query so the total is always correct.
+func (r *Repository) ExecuteSearchWithTotal(ctx context.Context, f SearchFilter) ([]User, int64, error) {
+	users, err := r.ExecuteSearch(ctx, f)
+	if err != nil {
+		return nil, 0, err
+	}
+
+	countQ := r.buildSearchQuery(ctx, f)
+	if len(countQ.errs) > 0 {
+		return nil, 0, countQ.errs[0]
+	}
+	var total int64
+	if err := countQ.q.Model(&User{}).Count(&total).Error; err != nil {
+		return nil, 0, fmt.Errorf("count failed: %w", err)
+	}
+	return users, total, nil
 }

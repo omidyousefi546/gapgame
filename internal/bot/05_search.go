@@ -315,13 +315,19 @@ func buildFilter(u *user.User, state *session.SearchState) user.SearchFilter {
 	f.Gender = state.Gender
 	f.Type = state.Type
 
+	// Global inactivity cut-off: long-inactive users never appear in results.
+	f.ActiveWithinDays = user.DefaultActivityWindowDays
+
 	switch state.Type {
 	case "age":
 		age := u.SafeAge()
 		f.MinAge = age - 3
 		f.MaxAge = age + 3
+		// The UI promises «در ۱ روز اخیر آنلاین بوده‌اند».
+		f.ActiveWithinDays = user.RecentActivityWindowDays
 	case "province":
 		f.Provinces = []string{u.Province}
+		f.ActiveWithinDays = user.RecentActivityWindowDays
 	case "advanced":
 		if len(state.Provinces) > 0 && state.Provinces[0] != "__near__" {
 			f.Provinces = state.Provinces
@@ -330,11 +336,11 @@ func buildFilter(u *user.User, state *session.SearchState) user.SearchFilter {
 		f.NoChat = true
 	case "new":
 		f.NewUsers = true
-	case "nearby": // جدید
+	case "nearby":
 		if state.NearbyLat != nil {
 			f.NearbyLat = state.NearbyLat
 			f.NearbyLng = state.NearbyLng
-			f.RadiusKM = 30 // شعاع پیش‌فرض ۵۰ کیلومتر
+			f.RadiusKM = 30 // شعاع پیش‌فرض ۳۰ کیلومتر
 		}
 	}
 	return f

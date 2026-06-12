@@ -283,6 +283,7 @@ func (h *Handler) RegisterHandlers() {
 	h.bot.Handle("\fgame_dooz4_normal", h.moveDooz4NormalHandler)
 	h.bot.Handle("\fgame_dooz_classic", h.moveDoozClassicHandler)
 	h.bot.Handle("\fgame_dare_and_truth", h.moveDareAndTruthHandler)
+	h.bot.Handle("\fdare_truth_end", h.endDareAndTruthHandler)
 	h.bot.Handle("\fmove_rps", h.moveRPSHandler)
 	h.bot.Handle("\fword_type", h.wordTypeHandler)
 	h.bot.Handle("\fword_len", h.wordLengthHandler)
