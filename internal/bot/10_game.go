@@ -14,6 +14,7 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+	"time"
 	"unicode"
 
 	tele "gopkg.in/telebot.v3"
@@ -39,41 +40,178 @@ func (h *Handler) sendAfterGameMenu(room *game_manager.Room) {
 	}
 }
 
-func (h *Handler) selectGameHandler(c tele.Context) error {
-	if h.redis.HasActiveChatSilent(c.Sender().ID) {
-		if h.rooms.GetRoomByPlayerID(c.Sender().ID) != nil {
-			return c.Respond(&tele.CallbackResponse{Text: "شما یک بازی فعال دارید. لطفاً ابتدا آن را تمام کنید."})
-		}
-	}
-
-	gameSelected := c.Data()
-
+func (h *Handler) gameConfigFromSelection(gameSelected string) (game_manager.GameState, string, bool) {
 	var state game_manager.GameState
-	var gameType string
+	var gameName string
 
 	switch gameSelected {
 	case "game_dooz4_normal":
 		state = &dooz4.GameDooz4Normal{}
-		gameType = "بازی دوز ۴ عادی"
+		gameName = "بازی دوز ۴ عادی"
 	case "game_dooz4_gravity":
 		state = &dooz4.GameDooz4{}
-		gameType = "بازی دوز ۴ جاذبه"
+		gameName = "بازی دوز ۴ جاذبه"
 	case "game_dooz_classic":
 		state = &dooz_classic.GameDoozClassic{}
-		gameType = "بازی دوز کلاسیک"
+		gameName = "بازی دوز کلاسیک"
 	case "game_dare_and_truth":
 		state = &dare_and_truth.GameDareTruth{}
-		gameType = "جرات حقیقت"
+		gameName = "جرات حقیقت"
 	case "game_rps":
 		state = &rps.GameRPS{Round: 1}
-		gameType = "سنگ کاغذ قیچی"
+		gameName = "سنگ کاغذ قیچی"
 	case "game_word_guess":
 		state = &word_guess.GameWordGuess{State: word_guess.StateChoosingType}
-		gameType = "حدس کلمه"
+		gameName = "حدس کلمه"
 	default:
+		return nil, "", false
+	}
+	return state, gameName, true
+}
+
+func gameSelectionFromState(state game_manager.GameState) string {
+	if state == nil {
+		return ""
+	}
+	switch state.GameType() {
+	case "gameDooz4Gravity":
+		return "game_dooz4_gravity"
+	case "gameDooz4Normal":
+		return "game_dooz4_normal"
+	case "gameDoozClassic":
+		return "game_dooz_classic"
+	case "gameDareAndTruth":
+		return "game_dare_and_truth"
+	case "gameRPS":
+		return "game_rps"
+	case "gameWordGuess":
+		return "game_word_guess"
+	default:
+		return ""
+	}
+}
+
+func gameBoardForState(state game_manager.GameState) *tele.ReplyMarkup {
+	switch g := state.(type) {
+	case *dooz4.GameDooz4:
+		return boardDooz4Keyboard(&g.Board, "game_dooz4_gravity")
+	case *dooz4.GameDooz4Normal:
+		return boardDooz4Keyboard(&g.Board, "game_dooz4_normal")
+	case *dooz_classic.GameDoozClassic:
+		return boardDoozClassicKeyboard(&g.Board)
+	case *dare_and_truth.GameDareTruth:
+		return boardDareAndTruthKeyboard()
+	case *rps.GameRPS:
+		return boardRPSKeyboard()
+	case *word_guess.GameWordGuess:
+		return boardWordTypeKeyboard()
+	default:
+		return nil
+	}
+}
+
+func startTextForState(room *game_manager.Room) string {
+	switch room.State.(type) {
+	case *rps.GameRPS:
+		return "🔄 راند 1 شروع شد. انتخاب خود را بزنید 👇"
+	case *word_guess.GameWordGuess:
+		return "نوع بازی را انتخاب کنید 👇"
+	case *dare_and_truth.GameDareTruth:
+		return fmt.Sprintf("🎮 برای طرف مقابلت یک مورد را انتخاب کن \nنوبت %v ", room.NameFor(room.Player1.ID))
+	default:
+		return fmt.Sprintf("🎮 بازی شروع شد \nنوبت %v (%v)", room.NameFor(room.Player1.ID), "🔴")
+	}
+}
+
+func (h *Handler) markPlayWithFriendsGameOver(room *game_manager.Room) {
+	if room == nil || room.Player1 == nil || h.redis.HasActiveChatSilent(room.Player1.ID) {
+		return
+	}
+	room.GameOver = true
+	room.PendingGameType = ""
+	room.PendingGameRequestedBy = 0
+	h.redis.ClearUserState(room.Player1.ID)
+	if room.Player2 != nil {
+		h.redis.ClearUserState(room.Player2.ID)
+	}
+	h.rooms.SaveRoom(room)
+}
+
+func (h *Handler) requestPlayWithFriendsGame(c tele.Context, room *game_manager.Room, gameSelected, gameName string) error {
+	if room == nil || room.Player1 == nil || room.Player2 == nil || h.redis.HasActiveChatSilent(c.Sender().ID) {
+		return editOrSend(c, messages.GameUnavailable, h.menuKeyboardFor(c.Sender().ID))
+	}
+	if !room.GameOver {
+		return c.Respond(&tele.CallbackResponse{Text: "یک بازی هنوز در جریان است. ابتدا آن را تمام کنید."})
+	}
+	opponent := room.Player1
+	if c.Sender().ID == room.Player1.ID {
+		opponent = room.Player2
+	}
+	room.PendingGameType = gameSelected
+	room.PendingGameRequestedBy = c.Sender().ID
+	h.rooms.SaveRoom(room)
+
+	requesterName := room.NameFor(c.Sender().ID)
+	h.bot.Send(opponent, fmt.Sprintf("🎮 %s درخواست شروع بازی «%s» را داده است. آیا قبول می‌کنید؟", requesterName, gameName), PlayWithFriendsGameRequestKeyboard(gameSelected))
+	return editOrSend(c, fmt.Sprintf("✅ درخواست بازی «%s» برای طرف مقابل ارسال شد. بازی فقط بعد از قبول او شروع می‌شود.", gameName))
+}
+
+func ensurePlayerFirst(room *game_manager.Room, firstID int64) {
+	if room == nil || room.Player2 == nil || room.Player1 == nil || room.Player1.ID == firstID {
+		return
+	}
+	room.Player1, room.Player2 = room.Player2, room.Player1
+	room.Player1Name, room.Player2Name = room.Player2Name, room.Player1Name
+}
+
+func (h *Handler) startPlayWithFriendsGame(room *game_manager.Room, firstPlayerID int64, state game_manager.GameState, gameName string) {
+	ensurePlayerFirst(room, firstPlayerID)
+	room.State = state
+	room.Reset()
+	room.Turn = room.Player1.ID
+	room.LastMove = time.Now()
+
+	h.redis.SetUserState(room.Player1.ID, session.StateInGame)
+	h.redis.SetUserState(room.Player2.ID, session.StateInGame)
+
+	h.bot.Send(room.Player1, fmt.Sprintf("✅ بازی «%s» شروع شد!", gameName), InGameMenuKeyboard())
+	h.bot.Send(room.Player2, fmt.Sprintf("✅ بازی «%s» شروع شد!", gameName), InGameMenuKeyboard())
+
+	keyboard := gameBoardForState(room.State)
+	text := startTextForState(room)
+	msg1, _ := h.bot.Send(room.Player1, text, keyboard)
+	if msg1 != nil {
+		room.MsgID1 = msg1.ID
+	}
+	msg2, _ := h.bot.Send(room.Player2, text, keyboard)
+	if msg2 != nil {
+		room.MsgID2 = msg2.ID
+	}
+	h.rooms.SaveRoom(room)
+}
+
+func (h *Handler) selectGameHandler(c tele.Context) error {
+	gameSelected := c.Data()
+	state, gameType, ok := h.gameConfigFromSelection(gameSelected)
+	if !ok {
 		return c.Respond(&tele.CallbackResponse{Text: messages.InvalidGame})
 	}
 
+	existingRoom := h.rooms.GetRoomByPlayerID(c.Sender().ID)
+	if h.redis.HasActiveChatSilent(c.Sender().ID) {
+		if existingRoom != nil {
+			return c.Respond(&tele.CallbackResponse{Text: "شما یک بازی فعال دارید. لطفاً ابتدا آن را تمام کنید."})
+		}
+	}
+
+	// Play with Friends: once both players are in the room, selecting another
+	// game must be a request to the same friend, not a fresh share-link room.
+	if existingRoom != nil && !h.redis.HasActiveChatSilent(c.Sender().ID) && existingRoom.Player2 != nil {
+		return h.requestPlayWithFriendsGame(c, existingRoom, gameSelected, gameType)
+	}
+
+	// A not-yet-joined friend invite can safely be replaced with a new link.
 	h.rooms.RemoveRoomsByPlayerID(c.Sender().ID)
 	room := h.rooms.CreateRoom(c.Sender(), state, h.playerGameName(c.Sender().ID))
 
@@ -148,6 +286,14 @@ func (h *Handler) repeatGameHandler(c tele.Context) error {
 	if room.Player2 == nil {
 		return editOrSend(c, messages.GameCancelledOpponent, h.menuKeyboardFor(c.Sender().ID))
 	}
+	if !h.redis.HasActiveChatSilent(c.Sender().ID) {
+		gameSelected := gameSelectionFromState(room.State)
+		_, gameName, ok := h.gameConfigFromSelection(gameSelected)
+		if !ok {
+			return editOrSend(c, messages.GameCancelledOpponent, h.menuKeyboardFor(c.Sender().ID))
+		}
+		return h.requestPlayWithFriendsGame(c, room, gameSelected, gameName)
+	}
 
 	if c.Sender().ID != room.Player1.ID {
 		room.Player2 = room.Player1
@@ -221,6 +367,45 @@ func (h *Handler) cancelGameHandler(c tele.Context) error {
 	return editOrSend(c, messages.GameCancelledYou, h.menuKeyboardFor(c.Sender().ID))
 }
 
+func (h *Handler) PlayWithFriendsGameAcceptCallback(c tele.Context) error {
+	gameSelected := c.Callback().Data
+	room := h.rooms.GetRoomByPlayerID(c.Sender().ID)
+	if room == nil || room.Player1 == nil || room.Player2 == nil || h.redis.HasActiveChatSilent(c.Sender().ID) {
+		return c.Respond(&tele.CallbackResponse{Text: messages.GameUnavailable})
+	}
+	if room.PendingGameType == "" || room.PendingGameRequestedBy == 0 || room.PendingGameRequestedBy == c.Sender().ID || room.PendingGameType != gameSelected {
+		return c.Respond(&tele.CallbackResponse{Text: "این درخواست بازی دیگر معتبر نیست."})
+	}
+	state, gameName, ok := h.gameConfigFromSelection(gameSelected)
+	if !ok {
+		return c.Respond(&tele.CallbackResponse{Text: messages.InvalidGame})
+	}
+	if c.Message() != nil {
+		h.bot.Edit(c.Message(), "✅ درخواست بازی پذیرفته شد.")
+	}
+	requesterID := room.PendingGameRequestedBy
+	h.startPlayWithFriendsGame(room, requesterID, state, gameName)
+	return nil
+}
+
+func (h *Handler) PlayWithFriendsGameRejectCallback(c tele.Context) error {
+	room := h.rooms.GetRoomByPlayerID(c.Sender().ID)
+	if room == nil || h.redis.HasActiveChatSilent(c.Sender().ID) {
+		return c.Respond(&tele.CallbackResponse{Text: messages.GameUnavailable})
+	}
+	requesterID := room.PendingGameRequestedBy
+	room.PendingGameType = ""
+	room.PendingGameRequestedBy = 0
+	h.rooms.SaveRoom(room)
+	if c.Message() != nil {
+		h.bot.Edit(c.Message(), "❌ درخواست بازی رد شد.", AfterGameMenuKeyboard())
+	}
+	if requesterID != 0 && requesterID != c.Sender().ID {
+		h.bot.Send(&tele.User{ID: requesterID}, "❌ طرف مقابل درخواست شروع بازی را رد کرد.", AfterGameMenuKeyboard())
+	}
+	return nil
+}
+
 func (h *Handler) handleGameJoin(c tele.Context, payload string) error {
 	if h.rooms.GetRoomByPlayerID(c.Sender().ID) != nil {
 		return c.Respond(&tele.CallbackResponse{Text: "شما یک بازی فعال دارید. لطفاً ابتدا آن را تمام کنید."})
@@ -275,6 +460,9 @@ func (h *Handler) moveDooz4GravityHandler(c tele.Context) error {
 	if room == nil {
 		return nil
 	}
+	if room.GameOver {
+		return c.Respond(&tele.CallbackResponse{Text: messages.GameAlreadyEnded})
+	}
 	xy := strings.Split(c.Callback().Data, "-")
 	x, _ := strconv.Atoi(xy[0])
 	y, _ := strconv.Atoi(xy[1])
@@ -286,6 +474,7 @@ func (h *Handler) moveDooz4GravityHandler(c tele.Context) error {
 			}
 			h.rooms.RemoveRoomByRoomID(room.ID)
 		} else {
+			h.markPlayWithFriendsGameOver(room)
 			h.sendAfterGameMenu(room)
 		}
 		return nil
@@ -299,6 +488,9 @@ func (h *Handler) moveDooz4NormalHandler(c tele.Context) error {
 	if room == nil {
 		return nil
 	}
+	if room.GameOver {
+		return c.Respond(&tele.CallbackResponse{Text: messages.GameAlreadyEnded})
+	}
 	xy := strings.Split(c.Callback().Data, "-")
 	x, _ := strconv.Atoi(xy[0])
 	y, _ := strconv.Atoi(xy[1])
@@ -310,6 +502,7 @@ func (h *Handler) moveDooz4NormalHandler(c tele.Context) error {
 			}
 			h.rooms.RemoveRoomByRoomID(room.ID)
 		} else {
+			h.markPlayWithFriendsGameOver(room)
 			h.sendAfterGameMenu(room)
 		}
 		return nil
@@ -323,6 +516,9 @@ func (h *Handler) moveDoozClassicHandler(c tele.Context) error {
 	if room == nil {
 		return nil
 	}
+	if room.GameOver {
+		return c.Respond(&tele.CallbackResponse{Text: messages.GameAlreadyEnded})
+	}
 	xy := strings.Split(c.Callback().Data, "-")
 	x, _ := strconv.Atoi(xy[0])
 	y, _ := strconv.Atoi(xy[1])
@@ -334,6 +530,7 @@ func (h *Handler) moveDoozClassicHandler(c tele.Context) error {
 			}
 			h.rooms.RemoveRoomByRoomID(room.ID)
 		} else {
+			h.markPlayWithFriendsGameOver(room)
 			h.sendAfterGameMenu(room)
 		}
 		return nil
@@ -345,6 +542,9 @@ func (h *Handler) moveDoozClassicHandler(c tele.Context) error {
 func (h *Handler) moveDareAndTruthHandler(c tele.Context) error {
 	room := h.rooms.GetRoomByPlayerID(c.Sender().ID)
 	if room == nil {
+		return c.Respond(&tele.CallbackResponse{Text: messages.GameAlreadyEnded})
+	}
+	if room.GameOver {
 		return c.Respond(&tele.CallbackResponse{Text: messages.GameAlreadyEnded})
 	}
 	game, ok := room.State.(*dare_and_truth.GameDareTruth)
@@ -420,6 +620,7 @@ func (h *Handler) endDareAndTruthHandler(c tele.Context) error {
 		return c.Send(messages.GameDareTruthEndedByYou, h.menuKeyboardFor(c.Sender().ID))
 	} else {
 		// Play with friends mode:
+		h.markPlayWithFriendsGameOver(room)
 		if opponent != nil {
 			opponentMsgID := room.MsgID1
 			if room.Player2 != nil && opponent.ID == room.Player2.ID {
@@ -588,6 +789,9 @@ func (h *Handler) moveRPSHandler(c tele.Context) error {
 	if room == nil {
 		return nil
 	}
+	if room.GameOver {
+		return c.Respond(&tele.CallbackResponse{Text: messages.GameAlreadyEnded})
+	}
 	game := room.State.(*rps.GameRPS)
 	if game.Round == 0 {
 		game.Round = 1
@@ -634,6 +838,7 @@ func (h *Handler) moveRPSHandler(c tele.Context) error {
 				h.redis.ClearUserState(room.Player1.ID)
 				h.rooms.RemoveRoomByRoomID(room.ID)
 			} else {
+				h.markPlayWithFriendsGameOver(room)
 				h.bot.Send(room.Player1, msg, AfterGameMenuKeyboard())
 				if room.Player2 != nil {
 					h.bot.Send(room.Player2, msg, AfterGameMenuKeyboard())
@@ -703,6 +908,9 @@ func (h *Handler) wordTypeHandler(c tele.Context) error {
 	if room == nil {
 		return nil
 	}
+	if room.GameOver {
+		return c.Respond(&tele.CallbackResponse{Text: messages.GameAlreadyEnded})
+	}
 	game := room.State.(*word_guess.GameWordGuess)
 	if game.State != word_guess.StateChoosingType {
 		return c.Respond(&tele.CallbackResponse{Text: "نوع بازی قبلاً انتخاب شده است."})
@@ -729,6 +937,9 @@ func (h *Handler) wordLengthHandler(c tele.Context) error {
 	room := h.rooms.GetRoomByPlayerID(c.Sender().ID)
 	if room == nil {
 		return nil
+	}
+	if room.GameOver {
+		return c.Respond(&tele.CallbackResponse{Text: messages.GameAlreadyEnded})
 	}
 	game := room.State.(*word_guess.GameWordGuess)
 	if game.State != word_guess.StateChoosingLength {
@@ -762,6 +973,9 @@ func (h *Handler) wordGuessMoveHandler(c tele.Context) error {
 	room := h.rooms.GetRoomByPlayerID(c.Sender().ID)
 	if room == nil {
 		return nil
+	}
+	if room.GameOver {
+		return c.Respond(&tele.CallbackResponse{Text: messages.GameAlreadyEnded})
 	}
 	game := room.State.(*word_guess.GameWordGuess)
 	char := normalizeSecretInput(game.Type, c.Callback().Data)
@@ -803,6 +1017,7 @@ func (h *Handler) wordGuessMoveHandler(c tele.Context) error {
 			h.redis.ClearUserState(c.Sender().ID)
 			h.rooms.RemoveRoomByRoomID(room.ID)
 		} else {
+			h.markPlayWithFriendsGameOver(room)
 			h.bot.Send(c.Sender(), fmt.Sprintf("🎉 تبریک! کلمه حریف را کامل حدس زدی و برنده شدی.\n%s\nبرنده: %s", wordGameSummary(game), winnerName), AfterGameMenuKeyboard())
 			if loser.ID != c.Sender().ID {
 				h.bot.Send(loser, fmt.Sprintf("💀 حریف کلمه شما را کامل حدس زد.\n%s\nبرنده: %s", wordGameSummary(game), winnerName), AfterGameMenuKeyboard())
@@ -998,6 +1213,7 @@ func (h *Handler) handleNumberGuessInput(c tele.Context, room *game_manager.Room
 			h.redis.ClearUserState(room.Player1.ID)
 			h.rooms.RemoveRoomByRoomID(room.ID)
 		} else {
+			h.markPlayWithFriendsGameOver(room)
 			h.bot.Send(room.Player1, msg, AfterGameMenuKeyboard())
 			if room.Player2 != nil {
 				h.bot.Send(room.Player2, msg, AfterGameMenuKeyboard())
@@ -1109,6 +1325,7 @@ func (h *Handler) handleWordGuessTextInput(c tele.Context, room *game_manager.Ro
 			h.redis.ClearUserState(c.Sender().ID)
 			h.rooms.RemoveRoomByRoomID(room.ID)
 		} else {
+			h.markPlayWithFriendsGameOver(room)
 			h.bot.Send(c.Sender(), fmt.Sprintf("🎉 تبریک! کلمه حریف را کامل حدس زدی و برنده شدی.\n%s\nبرنده: %s", wordGameSummary(game), winnerName), AfterGameMenuKeyboard())
 			if loser.ID != c.Sender().ID {
 				h.bot.Send(loser, fmt.Sprintf("💀 حریف کلمه شما را کامل حدس زد.\n%s\nبرنده: %s", wordGameSummary(game), winnerName), AfterGameMenuKeyboard())

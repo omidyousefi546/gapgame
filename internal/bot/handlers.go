@@ -269,6 +269,8 @@ func (h *Handler) RegisterHandlers() {
 	h.bot.Handle("\fcgame_req", h.ChatGameRequestCallback)
 	h.bot.Handle("\fcgame_acc", h.ChatGameAcceptCallback)
 	h.bot.Handle("\fcgame_rej", h.ChatGameRejectCallback)
+	h.bot.Handle("\fpwf_game_acc", h.PlayWithFriendsGameAcceptCallback)
+	h.bot.Handle("\fpwf_game_rej", h.PlayWithFriendsGameRejectCallback)
 
 	// Game
 

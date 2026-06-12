@@ -126,7 +126,7 @@ func (h *Handler) TextHandler(c tele.Context) error {
 
 	// Forward in active chat session or game room
 	room := h.rooms.GetRoomByPlayerID(u.TelegramID)
-	if room != nil {
+	if room != nil && !room.GameOver {
 		if game, ok := room.State.(*word_guess.GameWordGuess); ok {
 			if handled, err := h.handleWordGameText(c, room, game, text); handled {
 				return err

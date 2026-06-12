@@ -17,16 +17,19 @@ type GameState interface {
 }
 
 type Room struct {
-	ID          int64      `json:"id"`
-	Player1     *tele.User `json:"player1"`
-	Player2     *tele.User `json:"player2"`
-	Player1Name string     `json:"player1_name"`
-	Player2Name string     `json:"player2_name"`
-	Turn        int64      `json:"turn"`
-	MsgID1      int        `json:"msg_id1"`
-	MsgID2      int        `json:"msg_id2"`
-	LastMove    time.Time  `json:"last_move"`
-	State       GameState  `json:"-"`
+	ID                     int64      `json:"id"`
+	Player1                *tele.User `json:"player1"`
+	Player2                *tele.User `json:"player2"`
+	Player1Name            string     `json:"player1_name"`
+	Player2Name            string     `json:"player2_name"`
+	Turn                   int64      `json:"turn"`
+	MsgID1                 int        `json:"msg_id1"`
+	MsgID2                 int        `json:"msg_id2"`
+	LastMove               time.Time  `json:"last_move"`
+	GameOver               bool       `json:"game_over"`
+	PendingGameType        string     `json:"pending_game_type"`
+	PendingGameRequestedBy int64      `json:"pending_game_requested_by"`
+	State                  GameState  `json:"-"`
 }
 
 func (r *Room) NameFor(playerID int64) string {
@@ -219,6 +222,9 @@ func (r *Room) Reset() {
 	r.MsgID1 = 0
 	r.MsgID2 = 0
 	r.Turn = 0
+	r.GameOver = false
+	r.PendingGameType = ""
+	r.PendingGameRequestedBy = 0
 
 	if r.State != nil {
 		r.State.Reset()

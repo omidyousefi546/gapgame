@@ -495,6 +495,17 @@ func ChatGameRequestKeyboard(gameType string) *tele.ReplyMarkup {
 	return menu
 }
 
+func PlayWithFriendsGameRequestKeyboard(gameType string) *tele.ReplyMarkup {
+	menu := &tele.ReplyMarkup{}
+	menu.Inline(
+		menu.Row(
+			tele.Btn{Unique: "pwf_game_acc", Text: "✅ قبول", Data: gameType},
+			tele.Btn{Unique: "pwf_game_rej", Text: "❌ رد", Data: gameType},
+		),
+	)
+	return menu
+}
+
 // Games
 
 func GameMenuKeyboard() *tele.ReplyMarkup {
