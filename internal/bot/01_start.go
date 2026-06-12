@@ -5,12 +5,14 @@ import (
 
 	"strings"
 
+	"GapGame/internal/game/word_guess"
 	"GapGame/internal/service"
 
 	"GapGame/internal/session"
 
 	"GapGame/internal/user"
 	"GapGame/internal/utils"
+	"GapGame/pkg/messages"
 
 	"go.uber.org/zap"
 	tele "gopkg.in/telebot.v3"
@@ -27,7 +29,7 @@ func (h *Handler) StartHandler(c tele.Context) error {
 
 	if err != nil {
 
-		return c.Send("❌ خطا در دریافت اطلاعات کاربر")
+		return editOrSend(c, messages.ErrUserFetch)
 	}
 
 	if isNew && len(c.Args()) > 0 {
@@ -36,7 +38,7 @@ func (h *Handler) StartHandler(c tele.Context) error {
 		referrer, err := h.users.HandleReferral(u, referrerID)
 		if err == nil {
 			if _, err := h.bot.Send(&tele.User{ID: referrer.TelegramID},
-				utils.ReferalEnterUser); err != nil {
+				messages.ReferalEnterUser); err != nil {
 				h.log.Error("failed to send referral notification", zap.Error(err))
 			}
 		}
@@ -48,7 +50,7 @@ func (h *Handler) StartHandler(c tele.Context) error {
 
 	h.redis.ClearUserState(u.TelegramID)
 
-	return c.Send("به ربات چت ناشناس خوش آمدید! 👋", MainMenuKeyboard())
+	return editOrSend(c, messages.Welcome, MainMenuKeyboard())
 
 }
 
@@ -58,7 +60,7 @@ func (h *Handler) TextHandler(c tele.Context) error {
 
 	if err != nil {
 
-		return c.Send("❌ خطا در دریافت اطلاعات کاربر")
+		return editOrSend(c, messages.ErrUserFetch)
 	}
 
 	text := strings.TrimSpace(c.Text())
@@ -74,7 +76,7 @@ func (h *Handler) TextHandler(c tele.Context) error {
 
 		target, err := h.users.GetByID(ID)
 		if err != nil {
-			return c.Send("❌ خطا در دریافت اطلاعات کاربر")
+			return editOrSend(c, messages.ErrUserFetch)
 		}
 
 		return h.ShowUserProfile(c, u, target)
@@ -129,7 +131,7 @@ func (h *Handler) TextHandler(c tele.Context) error {
 				if game.State == word_guess.StateWaitingForWord && game.CreatorID == u.TelegramID {
 					word := strings.ToLower(strings.TrimSpace(text))
 					if len([]rune(word)) < 3 || len([]rune(word)) > 6 {
-						return c.Send("❌ طول کلمه باید بین ۳ تا ۶ کاراکتر باشد.")
+						return editOrSend(c, messages.GameWordTooLong)
 					}
 
 					game.TargetWord = word
@@ -143,9 +145,9 @@ func (h *Handler) TextHandler(c tele.Context) error {
 
 					h.rooms.SaveRoom(room)
 
-					h.bot.Send(c.Sender(), "✅ کلمه ثبت شد. بازی شروع شد!")
+					h.bot.Send(c.Sender(), messages.GameWordSet)
 
-					msg := fmt.Sprintf("🎮 حریفت کلمه رو انتخاب کرد!\n\nکلمه: %s\n\nحروف یا اعداد رو حدس بزن:", game.DisplayWord)
+					msg := fmt.Sprintf(messages.GameWordReady, game.DisplayWord)
 					kb := boardWordGuessKeyboard(game)
 					h.bot.Send(&tele.User{ID: game.GuesserID}, msg, kb)
 					return nil
@@ -157,14 +159,14 @@ func (h *Handler) TextHandler(c tele.Context) error {
 		return h.forwardTextToPartner(c, u, cs, text)
 	}
 
-	return c.Send("لطفاً از منو استفاده کنید 👇", MainMenuKeyboard())
+	return editOrSend(c, messages.UseMenu, MainMenuKeyboard())
 
 }
 
 func (h *Handler) MediaHandler(c tele.Context) error {
 	u, _, err := h.users.GetOrCreate(c.Sender().ID)
 	if err != nil {
-		return c.Send("❌ خطا در دریافت اطلاعات کاربر")
+		return editOrSend(c, messages.ErrUserFetch)
 	}
 
 	state, _ := h.redis.GetUserState(u.TelegramID)
@@ -182,7 +184,7 @@ func (h *Handler) MediaHandler(c tele.Context) error {
 		return h.forwardMediaToPartner(c, u, cs)
 	}
 
-	return c.Send("❌ ابتدا به یک چت فعال متصل شوید.")
+	return editOrSend(c, messages.NeedActiveChatFirst)
 }
 
 func (h *Handler) forwardMediaToPartner(c tele.Context, u *user.User, cs *session.ChatSession) error {
@@ -193,7 +195,7 @@ func (h *Handler) forwardMediaToPartner(c tele.Context, u *user.User, cs *sessio
 
 	msg := c.Message()
 	if msg == nil {
-		return c.Send("❌ پیام پیدا نشد.")
+		return editOrSend(c, messages.ErrMessageNotFound)
 	}
 
 	recipient := &tele.User{
@@ -203,7 +205,7 @@ func (h *Handler) forwardMediaToPartner(c tele.Context, u *user.User, cs *sessio
 	_, err := h.bot.Copy(recipient, msg)
 	if err != nil {
 		fmt.Println("bot.Copy error:", err)
-		return c.Send("❌ ارسال پیام به مخاطب با مشکل مواجه شد.")
+		return editOrSend(c, messages.ErrSendToPartner)
 	}
 
 	return nil
@@ -215,7 +217,7 @@ func (h *Handler) LocationHandler(c tele.Context) error {
 
 	if err != nil {
 
-		return c.Send("❌ خطا در دریافت اطلاعات کاربر")
+		return editOrSend(c, messages.ErrUserFetch)
 	}
 
 	state, _ := h.redis.GetUserState(u.TelegramID)
@@ -229,7 +231,7 @@ func (h *Handler) LocationHandler(c tele.Context) error {
 	}
 
 	return c.Respond(&tele.CallbackResponse{
-		Text: "لطفاً لوکیشن خود را بفرستید",
+		Text: messages.SendYourLocation,
 	})
 }
 
@@ -239,7 +241,7 @@ func (h *Handler) HandleGenderCallback(c tele.Context) error {
 
 	if err != nil {
 
-		return c.Send("❌ خطا", MainMenuKeyboard())
+		return editOrSend(c, messages.ErrGeneric, MainMenuKeyboard())
 	}
 
 	gender := string(user.Female)
@@ -251,7 +253,7 @@ func (h *Handler) HandleGenderCallback(c tele.Context) error {
 
 	if err := h.users.CompleteProfileField(u, "gender", gender); err != nil {
 
-		return c.Send("❌ خطا در ثبت جنسیت", MainMenuKeyboard())
+		return editOrSend(c, messages.ErrSetGender, MainMenuKeyboard())
 	}
 
 	c.Respond()
@@ -265,15 +267,15 @@ func (h *Handler) askNextProfileQuestion(c tele.Context, u *user.User) error {
 
 	case user.StateNeedGender:
 
-		return c.Send(fmt.Sprintf(utils.StartMessage, c.Sender().FirstName), GenderKeyboard())
+		return editOrSend(c, fmt.Sprintf(messages.StartMessage, c.Sender().FirstName), GenderKeyboard())
 	case user.StateNeedAge:
 		h.redis.SetUserState(u.TelegramID, session.StateCompleteAge)
 		// c.Bot().Send(c.Sender(), "لطفاً سن خود را وارد کنید (عدد بین 13 تا 100):")
-		return c.Send(utils.StartAge)
+		return editOrSend(c, messages.StartAge)
 	case user.StateNeedProvince:
 
 		h.redis.SetUserState(u.TelegramID, session.StateCompleteProvince)
-		return c.Send(utils.StartProvince, ProvinceKeyboard())
+		return editOrSend(c, messages.StartProvince, ProvinceKeyboard())
 	case user.StateComplete:
 
 		h.redis.ClearUserState(u.TelegramID)
@@ -290,11 +292,11 @@ func (h *Handler) handleProfileCompletion(c tele.Context, u *user.User, field, v
 
 		switch err {
 		case service.ErrInvalidAge:
-			return c.Send("❌ سن باید عدد بین 13 تا 100 باشد", RestartKeyboard())
+			return editOrSend(c, messages.ErrInvalidAgeMsg, RestartKeyboard())
 		case service.ErrInvalidProvince:
-			return c.Send("❌ لطفاً نام استان خود را از منوی زیر انتخاب کنید", ProvinceKeyboard())
+			return editOrSend(c, messages.ErrInvalidProvinceMsg, ProvinceKeyboard())
 		default:
-			return c.Send("❌ ورودی نامعتبر است", RestartKeyboard())
+			return editOrSend(c, messages.ErrInvalidInput, RestartKeyboard())
 		}
 	}
 
@@ -311,16 +313,14 @@ func (h *Handler) showOptionalPrompt(c tele.Context, u *user.User) error {
 
 	missingStr := strings.Join(missing, " , ")
 	msg := fmt.Sprintf(
-		"🔔 فقط %d قدم تا تکمیل پروفایل !\n\n"+
-			"اطلاعات تکمیل نشده ی شما : %s\n\n"+
-			"پروفایل خود را تکمیل کنید👇 و 5 سکه 💰 دریافت کنید.",
+		messages.OptionalPrompt,
 		len(missing),
 		missingStr,
 	)
 
-	c.Send(utils.CompleteReg, MainMenuKeyboard())
+	editOrSend(c, messages.CompleteReg, MainMenuKeyboard())
 
-	return c.Send(msg, OptionalCompletionKeyboard())
+	return editOrSend(c, msg, OptionalCompletionKeyboard())
 
 }
 
@@ -330,14 +330,14 @@ func (h *Handler) StartOptionalHandler(c tele.Context) error {
 
 	if err != nil {
 
-		return c.Send("❌ خطا", MainMenuKeyboard())
+		return editOrSend(c, messages.ErrGeneric, MainMenuKeyboard())
 	}
 
 	c.Respond()
 
 	if err := h.users.StartOptionalProfile(u); err != nil {
 
-		return c.Send("❌ خطا")
+		return editOrSend(c, messages.ErrGeneric)
 	}
 
 	return h.askNextOptionalField(c, u)
@@ -348,7 +348,7 @@ func (h *Handler) SkipOptionalHandler(c tele.Context) error {
 
 	c.Respond()
 
-	return c.Send("باشه! هر وقت خواستی از منوی پروفایل تکمیل کن 😊", MainMenuKeyboard())
+	return editOrSend(c, messages.OptionalSkipped, MainMenuKeyboard())
 
 }
 
@@ -359,7 +359,7 @@ func (h *Handler) askNextOptionalField(c tele.Context, u *user.User) error {
 	if len(missing) == 0 {
 
 		h.redis.ClearUserState(u.TelegramID)
-		return c.Send("🎉 پروفایل کامل شد! 5 سکه دریافت کردید.", MainMenuKeyboard())
+		return editOrSend(c, messages.OptionalDone, MainMenuKeyboard())
 	}
 
 	switch missing[0] {
@@ -367,22 +367,22 @@ func (h *Handler) askNextOptionalField(c tele.Context, u *user.User) error {
 	case "نام":
 
 		h.redis.SetUserState(u.TelegramID, session.StateOptionalName)
-		return c.Send("نام خود را وارد کنید (حداکثر 20 کاراکتر فارسی):", CancelKeyboard())
+		return editOrSend(c, messages.OptionalAskName, CancelKeyboard())
 	case "شهر":
 
 		h.redis.SetUserState(u.TelegramID, session.StateOptionalCity)
-		return c.Send("شهر خود را به فارسی وارد کنید:", CancelKeyboard())
+		return editOrSend(c, messages.OptionalAskCity, CancelKeyboard())
 	case "عکس پروفایل":
 
 		h.redis.SetUserState(u.TelegramID, session.StateOptionalPhoto)
-		return c.Send("عکس پروفایل خود را ارسال کنید:", CancelKeyboard())
+		return editOrSend(c, messages.OptionalAskPhoto, CancelKeyboard())
 	case "موقعیت مکانی":
 
 		h.redis.SetUserState(u.TelegramID, session.StateOptionalGPS)
 
-		c.Send(utils.GpsMsg1)
+		editOrSend(c, messages.GpsMsg1)
 
-		return c.Send(utils.GpsMsg2, LocationKeyboard())
+		return editOrSend(c, messages.GpsMsg2, LocationKeyboard())
 	}
 
 	return nil
@@ -395,11 +395,11 @@ func (h *Handler) handleOptionalField(c tele.Context, u *user.User, field, value
 
 		switch err {
 		case service.ErrInvalidName:
-			return c.Send("❌ نام باید فارسی و حداکثر 20 کاراکتر باشد", CancelKeyboard())
+			return editOrSend(c, messages.ErrNameInvalid, CancelKeyboard())
 		case service.ErrInvalidCity:
-			return c.Send("❌ نام شهر باید فارسی باشد", CancelKeyboard())
+			return editOrSend(c, messages.ErrCityInvalid, CancelKeyboard())
 		default:
-			return c.Send("❌ ورودی نامعتبر است", CancelKeyboard())
+			return editOrSend(c, messages.ErrInvalidInput, CancelKeyboard())
 		}
 	}
 

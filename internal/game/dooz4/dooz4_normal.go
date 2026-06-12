@@ -2,7 +2,7 @@ package dooz4
 
 import (
 	"GapGame/internal/game/game_manager"
-	"GapGame/internal/utils"
+	"GapGame/pkg/messages"
 	"fmt"
 	"strconv"
 	"time"
@@ -143,20 +143,20 @@ func (g *GameDooz4Normal) MakeMove(
 			b.Edit(&tele.StoredMessage{
 				MessageID: strconv.Itoa(room.MsgID1),
 				ChatID:    room.Player1.ID,
-			}, fmt.Sprintf(utils.GameWinWithName, player.FirstName), boardDooz4KeyboardDisabled(&g.Board))
+			}, fmt.Sprintf(messages.GameWinWithName, player.FirstName), boardDooz4KeyboardDisabled(&g.Board))
 			b.Edit(&tele.StoredMessage{
 				MessageID: strconv.Itoa(room.MsgID2),
 				ChatID:    room.Player2.ID,
-			}, fmt.Sprintf(utils.GameLoseWithName, player.FirstName), boardDooz4KeyboardDisabled(&g.Board))
+			}, fmt.Sprintf(messages.GameLoseWithName, player.FirstName), boardDooz4KeyboardDisabled(&g.Board))
 		} else {
 			b.Edit(&tele.StoredMessage{
 				MessageID: strconv.Itoa(room.MsgID2),
 				ChatID:    room.Player2.ID,
-			}, fmt.Sprintf(utils.GameWinWithName, player.FirstName), boardDooz4KeyboardDisabled(&g.Board))
+			}, fmt.Sprintf(messages.GameWinWithName, player.FirstName), boardDooz4KeyboardDisabled(&g.Board))
 			b.Edit(&tele.StoredMessage{
 				MessageID: strconv.Itoa(room.MsgID1),
 				ChatID:    room.Player1.ID,
-			}, fmt.Sprintf(utils.GameLoseWithName, player.FirstName), boardDooz4KeyboardDisabled(&g.Board))
+			}, fmt.Sprintf(messages.GameLoseWithName, player.FirstName), boardDooz4KeyboardDisabled(&g.Board))
 		}
 		room.Reset()
 		return true

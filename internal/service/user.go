@@ -10,6 +10,7 @@ import (
 	"GapGame/internal/session"
 	"GapGame/internal/user"
 	"GapGame/internal/utils"
+	"GapGame/pkg/messages"
 )
 
 var (
@@ -104,7 +105,7 @@ func (s *UserService) HandleReferral(newUser *user.User, referrerID string) (*us
 	}
 
 	// Award coins to referrer
-	value, _ := strconv.ParseInt(utils.EnterUserCoin, 10, 64)
+	value, _ := strconv.ParseInt(messages.EnterUserCoin, 10, 64)
 	referrer.Coins += int(value)
 
 	referrer.InviteCount++
@@ -540,4 +541,58 @@ func (s *UserService) DeductCoins(telegramID int64, amount int) error {
 	ctx2, cancel2 := utils.NewRequestContext()
 	defer cancel2()
 	return s.repo.Update(ctx2, u)
+}
+
+// ─── Admin operations ────────────────────────────────────────
+
+// GetAllTelegramIDs returns every active user's Telegram ID (for broadcast).
+func (s *UserService) GetAllTelegramIDs() ([]int64, error) {
+	ctx, cancel := utils.NewRequestContext()
+	defer cancel()
+	return s.repo.GetAllTelegramIDs(ctx)
+}
+
+// GiveCoinsToAll adds coins to every user. Returns affected user count.
+func (s *UserService) GiveCoinsToAll(amount int) (int64, error) {
+	ctx, cancel := utils.NewRequestContext()
+	defer cancel()
+	return s.repo.AddCoinsToAll(ctx, amount)
+}
+
+// GiveCoinsToPoor adds coins only to users with fewer than `threshold` coins.
+func (s *UserService) GiveCoinsToPoor(amount, threshold int) (int64, error) {
+	ctx, cancel := utils.NewRequestContext()
+	defer cancel()
+	return s.repo.AddCoinsToPoor(ctx, amount, threshold)
+}
+
+// SetBanned bans or unbans a user by Telegram ID.
+func (s *UserService) SetBanned(telegramID int64, banned bool) error {
+	ctx, cancel := utils.NewRequestContext()
+	defer cancel()
+	return s.repo.SetBanned(ctx, telegramID, banned)
+}
+
+// IsBanned reports whether a user is banned.
+func (s *UserService) IsBanned(telegramID int64) (bool, error) {
+	ctx, cancel := utils.NewRequestContext()
+	defer cancel()
+	return s.repo.IsBanned(ctx, telegramID)
+}
+
+// ResolveTelegramID accepts either a numeric Telegram ID or a short bot ID
+// (the /user_xxx form) and resolves it to a Telegram ID.
+func (s *UserService) ResolveTelegramID(ref string) (int64, error) {
+	ref = strings.TrimSpace(strings.TrimPrefix(ref, "/user_"))
+	if id, err := strconv.ParseInt(ref, 10, 64); err == nil {
+		// Numeric — could be a Telegram ID already.
+		if _, gerr := s.GetByTelegramID(id); gerr == nil {
+			return id, nil
+		}
+	}
+	u, err := s.GetByID(ref)
+	if err != nil {
+		return 0, err
+	}
+	return u.TelegramID, nil
 }

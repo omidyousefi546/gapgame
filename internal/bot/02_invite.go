@@ -1,7 +1,7 @@
 package bot
 
 import (
-	"GapGame/internal/utils"
+	"GapGame/pkg/messages"
 	"fmt"
 
 	"go.uber.org/zap"
@@ -14,28 +14,28 @@ func (h *Handler) InviteHandler(c tele.Context) error {
 
 	if err != nil {
 
-		return c.Send("❌ خطا در دریافت اطلاعات")
+		return editOrSend(c, messages.ErrInfoFetch)
 	}
 
 	if c.Callback() != nil {
 
 		c.Respond()
 	}
-	inviteLink := fmt.Sprintf("https://ble.ir/%s?start=r_%v", utils.BOT_USERNAME, u.ID)
+	inviteLink := fmt.Sprintf("https://ble.ir/%s?start=r_%v", messages.BOT_USERNAME, u.ID)
 
 	// پیام اول - بنر قابل فوروارد
 	msg1 := fmt.Sprintf(
-		utils.InviteMsg1,
+		messages.InviteMsg1,
 		inviteLink,
 	)
 
 	// پیام دوم - اطلاعات دعوت
 	msg2 := fmt.Sprintf(
-		utils.InviteMsg2,
+		messages.InviteMsg2,
 		u.InviteCount,
 	)
 
-	if err := c.Send(msg1, tele.ModeHTML); err != nil {
+	if err := editOrSend(c, msg1, tele.ModeHTML); err != nil {
 		h.log.Error("failed to send invite message 1", zap.Error(err))
 		return err
 	}

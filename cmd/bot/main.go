@@ -56,7 +56,7 @@ func main() {
 	roomManager := game_manager.NewRoomManager(rdb)
 
 	// Initialize handler
-	h := bot.New(b, userService, sessionManager, userRepo, roomManager, appLog)
+	h := bot.New(b, userService, sessionManager, userRepo, roomManager, appLog, cfg.AdminIDs)
 	h.RegisterHandlers()
 
 	// Start match worker

@@ -41,9 +41,10 @@ type User struct {
 	Latitude             *float64
 	Longitude            *float64
 	ProfileState         ProfileState `gorm:"type:varchar(20);default:'need_gender'"`
-	ReceivedProfileBonus bool  `gorm:"default:false"`
+	ReceivedProfileBonus bool         `gorm:"default:false"`
 	InviteCount          int
 	DisableLikes         bool `gorm:"default:false"`
+	Banned               bool `gorm:"default:false;index"`
 
 	SilentUntil *time.Time `gorm:"default:null"`
 	LastSeenAt  time.Time  `gorm:"index"`

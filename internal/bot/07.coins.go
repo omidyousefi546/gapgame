@@ -1,7 +1,7 @@
 package bot
 
 import (
-	"GapGame/internal/utils"
+	"GapGame/pkg/messages"
 	"fmt"
 
 	tele "gopkg.in/telebot.v3"
@@ -13,7 +13,7 @@ func (h *Handler) CoinsHandler(c tele.Context) error {
 
 	if err != nil {
 
-		return c.Send("❌ خطا در دریافت اطلاعات")
+		return editOrSend(c, messages.ErrInfoFetch)
 	}
 
 	if c.Callback() != nil {
@@ -22,7 +22,7 @@ func (h *Handler) CoinsHandler(c tele.Context) error {
 	}
 
 	msg := fmt.Sprintf(
-		utils.FreeCoin,
+		messages.FreeCoin,
 		u.Coins,
 	)
 
@@ -36,18 +36,18 @@ func (h *Handler) CoinsHandler(c tele.Context) error {
 		keyboard.Row(keyboard.Data("🎁 معرفی به دوستان (سکه رایگان)", "btnInviteFriends", "invite_friends")),
 	)
 
-	return c.Send(msg, keyboard, tele.ModeHTML)
+	return editOrSend(c, msg, keyboard, tele.ModeHTML)
 
 }
 
 // handler برای دکمه‌های خرید
 func (h *Handler) BuyCoinsHandler(c tele.Context) error {
 	c.Respond(&tele.CallbackResponse{
-		Text: "⏳ در حال اتصال به درگاه پرداخت...",
+		Text: messages.ConnectingPayment,
 	})
 
 	// اینجا باید به درگاه پرداخت وصل بشی
 	// فعلاً فقط یه پیام می‌فرستیم
-	return c.Send("🚧 سیستم پرداخت به زودی فعال می‌شود.")
+	return editOrSend(c, messages.PaymentSoon)
 
 }

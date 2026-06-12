@@ -418,3 +418,61 @@ func (r *Repository) bulkUpdateSQLite(ctx context.Context, data map[int64]time.T
 
 	return r.db.WithContext(ctx).Exec(query, args...).Error
 }
+
+// ─── Admin operations ─────────────────────────────────────────
+
+// GetAllTelegramIDs returns the Telegram IDs of every (non-banned) user.
+// Used by the admin broadcast command.
+func (r *Repository) GetAllTelegramIDs(ctx context.Context) ([]int64, error) {
+	var ids []int64
+	err := r.db.WithContext(ctx).
+		Model(&User{}).
+		Where("banned = ?", false).
+		Pluck("telegram_id", &ids).Error
+	return ids, err
+}
+
+// AddCoinsToAll atomically adds `amount` coins to every user and returns the
+// number of affected rows.
+func (r *Repository) AddCoinsToAll(ctx context.Context, amount int) (int64, error) {
+	res := r.db.WithContext(ctx).
+		Model(&User{}).
+		Where("1 = 1").
+		UpdateColumn("coins", gorm.Expr("coins + ?", amount))
+	return res.RowsAffected, res.Error
+}
+
+// AddCoinsToPoor adds `amount` coins only to users whose balance is below
+// `threshold` (e.g. < 2 coins) and returns the number of affected rows.
+func (r *Repository) AddCoinsToPoor(ctx context.Context, amount, threshold int) (int64, error) {
+	res := r.db.WithContext(ctx).
+		Model(&User{}).
+		Where("coins < ?", threshold).
+		UpdateColumn("coins", gorm.Expr("coins + ?", amount))
+	return res.RowsAffected, res.Error
+}
+
+// SetBanned bans or unbans a user by Telegram ID.
+func (r *Repository) SetBanned(ctx context.Context, telegramID int64, banned bool) error {
+	res := r.db.WithContext(ctx).
+		Model(&User{}).
+		Where("telegram_id = ?", telegramID).
+		UpdateColumn("banned", banned)
+	if res.Error != nil {
+		return res.Error
+	}
+	if res.RowsAffected == 0 {
+		return gorm.ErrRecordNotFound
+	}
+	return nil
+}
+
+// IsBanned reports whether the user with the given Telegram ID is banned.
+func (r *Repository) IsBanned(ctx context.Context, telegramID int64) (bool, error) {
+	var banned bool
+	err := r.db.WithContext(ctx).
+		Model(&User{}).
+		Where("telegram_id = ?", telegramID).
+		Pluck("banned", &banned).Error
+	return banned, err
+}

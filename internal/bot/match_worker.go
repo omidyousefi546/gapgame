@@ -9,6 +9,7 @@ import (
 	tele "gopkg.in/telebot.v3"
 
 	"GapGame/internal/session"
+	"GapGame/pkg/messages"
 )
 
 // OptimizedMatchWorker handles efficient user matching with persistent state
@@ -60,6 +61,12 @@ func (w *OptimizedMatchWorker) processMatches(ctx context.Context) {
 		return
 	}
 
+	// Expire entries that have been waiting longer than the automatic
+	// 2-minute search window (session.SearchTimeout). Expired users get a
+	// "no user found" message with a «Search Again» button that reuses
+	// their previous filter.
+	queueEntries = w.expireStaleEntries(ctx, queueEntries)
+
 	if len(queueEntries) < 2 {
 		return
 	}
@@ -88,6 +95,46 @@ func (w *OptimizedMatchWorker) processMatches(ctx context.Context) {
 			}
 		}
 	}
+}
+
+// expireStaleEntries removes users whose 2-minute search window has elapsed,
+// refunds their coins, and turns their "searching…" message into the
+// "no user found" message with a Search-Again button. It returns the entries
+// that are still fresh.
+func (w *OptimizedMatchWorker) expireStaleEntries(ctx context.Context, entries []session.QueueEntry) []session.QueueEntry {
+	fresh := entries[:0]
+	now := time.Now()
+
+	for i := range entries {
+		entry := entries[i]
+		if now.Sub(entry.JoinedAt) < session.SearchTimeout {
+			fresh = append(fresh, entry)
+			continue
+		}
+
+		// Remove from queue + waiting state.
+		w.removeFromQueue(ctx, entry.TelegramID)
+		w.handler.redis.LeaveQueue(entry.TelegramID)
+
+		// Refund the search cost — no match means no charge.
+		if entry.Cost > 0 {
+			if err := w.handler.users.AwardCoinsByTelegramID(entry.TelegramID, entry.Cost, "search_timeout_refund"); err != nil {
+				w.log.Error("[MatchWorker] timeout refund failed",
+					zap.Error(err), zap.Int64("user_id", entry.TelegramID))
+			}
+		}
+
+		// Edit the "searching…" message into the timeout notice with the
+		// «Search Again» button that re-uses the previous filter.
+		w.editOrSend(entry.TelegramID, entry.MessageID,
+			messages.QueueNoMatch, SearchAgainKeyboard(entry.Filter))
+
+		w.log.Info("[MatchWorker] search timed out",
+			zap.Int64("user_id", entry.TelegramID),
+			zap.String("filter", entry.Filter))
+	}
+
+	return fresh
 }
 
 // getAllQueueEntries retrieves all current queue entries from Redis.
@@ -209,8 +256,8 @@ func (w *OptimizedMatchWorker) createMatch(ctx context.Context, user1, user2 *se
 			}
 		}
 
-		w.handler.bot.Send(&tele.User{ID: user1.TelegramID}, "❌ خطا در برقراری اتصال. سکه‌های شما برگشت داده شد.")
-		w.handler.bot.Send(&tele.User{ID: user2.TelegramID}, "❌ خطا در برقراری اتصال. سکه‌های شما برگشت داده شد.")
+		w.handler.bot.Send(&tele.User{ID: user1.TelegramID}, messages.MatchError)
+		w.handler.bot.Send(&tele.User{ID: user2.TelegramID}, messages.MatchError)
 		return
 	}
 
@@ -218,12 +265,13 @@ func (w *OptimizedMatchWorker) createMatch(ctx context.Context, user1, user2 *se
 	// removeFromQueue, but doing it here too is safe and avoids races).
 	w.removeFromQueue(ctxWithTimeout, user1.TelegramID)
 	w.removeFromQueue(ctxWithTimeout, user2.TelegramID)
+	w.handler.redis.LeaveQueue(user1.TelegramID)
+	w.handler.redis.LeaveQueue(user2.TelegramID)
 
-	const msgText = "👀 پیدا شد! متصل شدی. به مخاطبت سلام بده 🗣️"
 	kb := ActiveChatKeyboard()
 
-	w.sendOrDelete(user1.TelegramID, user1.MessageID, msgText, kb)
-	w.sendOrDelete(user2.TelegramID, user2.MessageID, msgText, kb)
+	w.announceMatch(user1.TelegramID, user1.MessageID, messages.MatchFound, kb)
+	w.announceMatch(user2.TelegramID, user2.MessageID, messages.MatchFound, kb)
 
 	w.log.Info("[MatchWorker] Users matched successfully",
 		zap.Int64("user1", user1.TelegramID),
@@ -246,29 +294,41 @@ func (w *OptimizedMatchWorker) removeFromQueue(ctx context.Context, userID int64
 	w.handler.redis.RemoveWaitingState(ctxWithTimeout, userID)
 }
 
-func (w *OptimizedMatchWorker) sendOrDelete(userID int64, messageID int, text string, kb *tele.ReplyMarkup) {
-	user := &tele.User{ID: userID}
+// editOrSend edits the user's previous bot message (the "searching…" one)
+// in place; only when editing is impossible does it send a new message.
+func (w *OptimizedMatchWorker) editOrSend(userID int64, messageID int, text string, kb *tele.ReplyMarkup) {
 	if messageID != 0 {
 		msg := &tele.Message{ID: messageID, Chat: &tele.Chat{ID: userID}}
-		// حذف پیام جستجو و دکمه لغو
-		err := w.handler.bot.Delete(msg)
-		if err != nil {
-			w.log.Warn("[MatchWorker] failed to delete searching message", 
-				zap.Error(err), 
-				zap.Int64("user_id", userID), 
-				zap.Int("message_id", messageID))
-		} else {
-			w.log.Info("[MatchWorker] successfully deleted searching message", 
-				zap.Int64("user_id", userID), 
-				zap.Int("message_id", messageID))
+		if _, err := w.handler.bot.Edit(msg, text, kb); err == nil {
+			return
 		}
-	} else {
-		w.log.Warn("[MatchWorker] messageID is 0, cannot delete searching message", 
-			zap.Int64("user_id", userID))
 	}
-	// ارسال پیام شروع چت و کیبورد مدیریت چت
-	_, err := w.handler.bot.Send(user, text, kb)
-	if err != nil {
+	if _, err := w.handler.bot.Send(&tele.User{ID: userID}, text, kb); err != nil {
+		w.log.Error("[MatchWorker] failed to send message", zap.Error(err), zap.Int64("user_id", userID))
+	}
+}
+
+// announceMatch turns the "searching…" message into the match notice and then
+// delivers the reply keyboard for the active chat (reply keyboards can only
+// ship with a new message).
+func (w *OptimizedMatchWorker) announceMatch(userID int64, messageID int, text string, kb *tele.ReplyMarkup) {
+	edited := false
+	if messageID != 0 {
+		msg := &tele.Message{ID: messageID, Chat: &tele.Chat{ID: userID}}
+		if _, err := w.handler.bot.Edit(msg, text); err == nil {
+			edited = true
+		}
+	}
+
+	user := &tele.User{ID: userID}
+	if edited {
+		// متن اصلی ویرایش شد؛ کیبورد چت فقط با پیام جدید قابل ارسال است.
+		if _, err := w.handler.bot.Send(user, messages.ChatKeyboardHint, kb); err != nil {
+			w.log.Error("[MatchWorker] failed to send chat keyboard", zap.Error(err), zap.Int64("user_id", userID))
+		}
+		return
+	}
+	if _, err := w.handler.bot.Send(user, text, kb); err != nil {
 		w.log.Error("[MatchWorker] failed to send match message", zap.Error(err), zap.Int64("user_id", userID))
 	}
 }

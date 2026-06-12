@@ -31,11 +31,14 @@ type Handler struct {
 	rooms *game_manager.RoomManager
 
 	log *zap.Logger
+
+	// admins holds the Telegram IDs allowed to use admin-only commands.
+	admins map[int64]bool
 }
 
 var rateLimitDuration = time.Second
 
-func New(b *tele.Bot, userService *service.UserService, sm *session.Manager, repo *user.Repository, rm *game_manager.RoomManager, log *zap.Logger) *Handler {
+func New(b *tele.Bot, userService *service.UserService, sm *session.Manager, repo *user.Repository, rm *game_manager.RoomManager, log *zap.Logger, admins map[int64]bool) *Handler {
 	rm.RegisterGameState("gameDooz4Gravity", func() game_manager.GameState { return &dooz4.GameDooz4{} })
 	rm.RegisterGameState("gameDooz4Normal", func() game_manager.GameState { return &dooz4.GameDooz4Normal{} })
 	rm.RegisterGameState("gameDoozClassic", func() game_manager.GameState { return &dooz_classic.GameDoozClassic{} })
@@ -43,14 +46,42 @@ func New(b *tele.Bot, userService *service.UserService, sm *session.Manager, rep
 	rm.RegisterGameState("gameRPS", func() game_manager.GameState { return &rps.GameRPS{} })
 	rm.RegisterGameState("gameWordGuess", func() game_manager.GameState { return &word_guess.GameWordGuess{} })
 
-	return &Handler{
-		bot:   b,
-		users: userService,
-		redis: sm,
-		db:    repo,
-		rooms: rm,
-		log:   log,
+	if admins == nil {
+		admins = make(map[int64]bool)
 	}
+
+	return &Handler{
+		bot:    b,
+		users:  userService,
+		redis:  sm,
+		db:     repo,
+		rooms:  rm,
+		log:    log,
+		admins: admins,
+	}
+}
+
+// editOrSend is the single place that implements the project-wide rule:
+// «whenever a user clicks an inline keyboard button, the next response must
+// edit the previous message instead of sending a new one».
+//
+// It edits the message the callback originated from when possible and
+// degrades gracefully to sending a new message when editing is impossible
+// (reply keyboards can't be attached to an edit, photo messages can't have
+// their text edited, the message may be too old, …).
+func editOrSend(c tele.Context, what interface{}, opts ...interface{}) error {
+	if c.Callback() != nil && c.Message() != nil {
+		// A reply keyboard can only be delivered with a *new* message.
+		for _, opt := range opts {
+			if kb, ok := opt.(*tele.ReplyMarkup); ok && len(kb.ReplyKeyboard) > 0 {
+				return c.Send(what, opts...)
+			}
+		}
+		if err := c.Edit(what, opts...); err == nil {
+			return nil
+		}
+	}
+	return c.Send(what, opts...)
 }
 
 func (h *Handler) trackLastSeenMiddleware() tele.MiddlewareFunc {
@@ -75,6 +106,12 @@ func (h *Handler) RegisterHandlers() {
 	h.bot.Use(middleware.RateLimit(logger.New("ratelimit"), &rateLimitDuration))
 
 	h.bot.Use(h.trackLastSeenMiddleware())
+
+	h.bot.Use(h.banGuardMiddleware())
+
+	// Admin-only commands
+
+	h.registerAdminHandlers()
 
 	// Commands
 
@@ -222,7 +259,7 @@ func (h *Handler) RegisterHandlers() {
 	h.bot.Handle(&btnEndChat, h.EndChatHandler)
 	h.bot.Handle(&btnConfirmEndChat, h.ConfirmEndChatHandler)
 	h.bot.Handle(&btnCancelEndChat, h.CancelEndChatHandler)
-	h.bot.Handle(&btnCancelQueue, h.CancelQueueHandler)
+	h.bot.Handle("\fsearch_again", h.SearchAgainHandler)
 
 	h.bot.Handle("\fcgame_req", h.ChatGameRequestCallback)
 	h.bot.Handle("\fcgame_acc", h.ChatGameAcceptCallback)

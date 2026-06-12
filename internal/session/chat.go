@@ -11,7 +11,13 @@ import (
 )
 
 const (
-	chatQueueTTL  = 1 * time.Minute
+	// SearchTimeout is how long a user stays in the matching queue before the
+	// bot reports that no partner was found (item: auto search for 2 minutes).
+	SearchTimeout = 2 * time.Minute
+
+	// chatQueueTTL must outlive SearchTimeout: the match worker expires
+	// individual entries itself; the key TTL is only a safety net.
+	chatQueueTTL  = 5 * time.Minute
 	activeChatTTL = 4 * time.Hour
 )
 

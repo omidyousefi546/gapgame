@@ -7,6 +7,7 @@ import (
 	"GapGame/internal/session"
 	"GapGame/internal/user"
 	"GapGame/internal/utils"
+	"GapGame/pkg/messages"
 
 	ptime "github.com/yaa110/go-persian-calendar"
 
@@ -38,7 +39,7 @@ const searchPageSize = 10
 
 func (h *Handler) SearchHandler(c tele.Context) error {
 
-	return c.Send("🔍 جستجوی کاربران\n\n👆 چه کسایی رو نشونت بدم؟ انتخاب کن", SearchMainKeyboard())
+	return editOrSend(c, messages.SearchIntro, SearchMainKeyboard())
 
 }
 
@@ -52,12 +53,12 @@ func (h *Handler) SearchTypeHandler(c tele.Context) error {
 
 	u, _, err := h.users.GetOrCreate(c.Sender().ID)
 	if err != nil {
-		return c.Send("❌ خطا در دریافت اطلاعات کاربر")
+		return c.Send(messages.ErrUserFetch)
 	}
 
 	// بررسی GPS برای nearby
 	if searchType == "nearby" && u.Latitude == nil {
-		return c.Send("❌ برای جست‌وجوی افراد نزدیک باید موقعیت GPS خود را ثبت کنید.")
+		return editOrSend(c, messages.SearchNeedGPS)
 	}
 
 	state := &session.SearchState{Type: searchType, Offset: 0}
@@ -70,8 +71,9 @@ func (h *Handler) SearchTypeHandler(c tele.Context) error {
 
 	h.redis.SetSearchState(u.TelegramID, state)
 
-	return c.Send(
-		fmt.Sprintf("👇 چه کسایی رو از بین %s نشونت بدم؟ انتخاب کن", label),
+	return editOrSend(
+		c,
+		fmt.Sprintf(messages.SearchPickGender, label),
 		SearchGenderKeyboard(),
 	)
 }
@@ -85,7 +87,7 @@ func (h *Handler) SearchGenderHandler(c tele.Context) error {
 
 	u, _, err := h.users.GetOrCreate(c.Sender().ID)
 	if err != nil {
-		return c.Send("❌ خطا")
+		return c.Send(messages.ErrGeneric)
 	}
 
 	state, _ := h.redis.GetSearchState(u.TelegramID)
@@ -124,7 +126,7 @@ func (h *Handler) SearchProvinceHandler(c tele.Context) error {
 
 	u, _, err := h.users.GetOrCreate(c.Sender().ID)
 	if err != nil {
-		return c.Send("❌ خطا")
+		return c.Send(messages.ErrGeneric)
 	}
 
 	state, _ := h.redis.GetSearchState(u.TelegramID)
@@ -162,7 +164,7 @@ func buildProvinceMessage(state *session.SearchState) string {
 		}
 	}
 	return fmt.Sprintf(
-		"👫 جنسیت : [%s]\n\n📍 استان های انتخاب شده : %s\n\nاستان های مورد نظرتو انتخاب کن و در آخر گزینه «➡️ مرحله بعدی» رو بزن 👇",
+		messages.SearchProvinceMsg,
 		genderLabel(state.Gender), selectedStr,
 	)
 }
@@ -180,14 +182,14 @@ func (h *Handler) sendSearchResults(c tele.Context, u *user.User, state *session
 
 	results, err := h.db.SearchUsers(ctx, filter)
 	if err != nil {
-		return c.Send("❌ خطا در جستجو")
+		return c.Send(messages.SearchError)
 	}
 
 	if len(results) == 0 {
 		if page == 0 {
-			return c.Send("😔 کاربری با این مشخصات پیدا نشد.\nفیلترها را تغییر دهید یا بعداً دوباره امتحان کنید.")
+			return editOrSend(c, messages.SearchNoResults)
 		}
-		return c.Respond(&tele.CallbackResponse{Text: "صفحه‌ای دیگری وجود ندارد"})
+		return c.Respond(&tele.CallbackResponse{Text: messages.SearchNoMorePages})
 	}
 
 	state.Offset = page
@@ -205,7 +207,7 @@ func (h *Handler) sendSearchResults(c tele.Context, u *user.User, state *session
 		sb.WriteString(h.formatUserRow(startIndex+i+1, &target, u))
 		sb.WriteString("\n〰〰〰〰〰〰〰〰〰〰\n\n")
 	}
-	sb.WriteString(fmt.Sprintf("\nجستجو شده در %s", jalaliNow))
+	sb.WriteString(fmt.Sprintf(messages.SearchFooter, jalaliNow))
 
 	isFirstPage := page == 0
 	hasMore := len(results) == searchPageSize
@@ -221,10 +223,7 @@ func (h *Handler) sendSearchResults(c tele.Context, u *user.User, state *session
 		kb = SearchResultKeyboard(true, hasMore)
 	}
 
-	if c.Callback() != nil {
-		return c.Edit(sb.String(), kb)
-	}
-	return c.Send(sb.String(), kb)
+	return editOrSend(c, sb.String(), kb)
 }
 
 func formatJalaliNow() string {
@@ -278,11 +277,11 @@ func (h *Handler) SearchNextPageHandler(c tele.Context) error {
 	c.Respond()
 	u, _, err := h.users.GetOrCreate(c.Sender().ID)
 	if err != nil {
-		return c.Respond(&tele.CallbackResponse{Text: "❌ خطا"})
+		return c.Respond(&tele.CallbackResponse{Text: messages.ErrGeneric})
 	}
 	state, _ := h.redis.GetSearchState(u.TelegramID)
 	if state == nil {
-		return c.Respond(&tele.CallbackResponse{Text: "❌ خطا"})
+		return c.Respond(&tele.CallbackResponse{Text: messages.ErrGeneric})
 	}
 	return h.sendSearchResults(c, u, state, state.Offset+1)
 }
@@ -291,11 +290,11 @@ func (h *Handler) SearchPrevPageHandler(c tele.Context) error {
 	c.Respond()
 	u, _, err := h.users.GetOrCreate(c.Sender().ID)
 	if err != nil {
-		return c.Respond(&tele.CallbackResponse{Text: "❌ خطا"})
+		return c.Respond(&tele.CallbackResponse{Text: messages.ErrGeneric})
 	}
 	state, _ := h.redis.GetSearchState(u.TelegramID)
 	if state == nil || state.Offset <= 0 {
-		return c.Respond(&tele.CallbackResponse{Text: "اول لیست هستی"})
+		return c.Respond(&tele.CallbackResponse{Text: messages.SearchFirstPage})
 	}
 	return h.sendSearchResults(c, u, state, state.Offset-1)
 }
@@ -303,7 +302,7 @@ func (h *Handler) SearchPrevPageHandler(c tele.Context) error {
 func (h *Handler) SearchSwipeHandler(c tele.Context) error {
 	c.Respond()
 	// TODO: پیاده‌سازی حالت کشویی
-	return c.Send("⚡ حالت کشویی به زودی...")
+	return editOrSend(c, messages.SearchSwipeSoon)
 }
 
 // ─── helpers ─────────────────────────────────────────────────
@@ -374,6 +373,6 @@ func (h *Handler) SearchPageHandler(c tele.Context) error {
 	case "swipe":
 		return h.SearchSwipeHandler(c)
 	default:
-		return c.Respond(&tele.CallbackResponse{Text: "❌ دستور نامعتبر"})
+		return c.Respond(&tele.CallbackResponse{Text: messages.ErrInvalidCommand})
 	}
 }

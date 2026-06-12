@@ -10,6 +10,7 @@ import (
 
 	"GapGame/internal/service"
 	"GapGame/internal/utils"
+	"GapGame/pkg/messages"
 
 	"GapGame/internal/session"
 
@@ -25,7 +26,7 @@ func (h *Handler) ProfileHandler(c tele.Context) error {
 
 	if err != nil {
 
-		return c.Send("❌ خطا در دریافت اطلاعات کاربر")
+		return editOrSend(c, messages.ErrUserFetch)
 	}
 
 	if c.Callback() != nil {
@@ -59,7 +60,7 @@ func (h *Handler) sendProfileMessage(c tele.Context, viewer *user.User, target *
 		kb = ProfileActionKeyboard(h.users, viewer, target, isOnline)
 	}
 
-	return c.Send(&tele.Photo{File: tele.File{FileID: photo}, Caption: text}, kb, tele.ModeHTML)
+	return editOrSend(c, &tele.Photo{File: tele.File{FileID: photo}, Caption: text}, kb, tele.ModeHTML)
 
 }
 
@@ -209,14 +210,14 @@ func calcDistance(lat1, lon1, lat2, lon2 float64) float64 {
 func (h *Handler) LikeHandler(c tele.Context) error {
 	u, _, err := h.users.GetOrCreate(c.Sender().ID)
 	if err != nil {
-		return c.Respond(&tele.CallbackResponse{Text: "❌ خطا"})
+		return c.Respond(&tele.CallbackResponse{Text: messages.ErrGeneric})
 	}
 
 	targetID, _ := strconv.ParseInt(c.Callback().Data, 10, 64)
 
 	target, _, err := h.users.GetOrCreate(targetID)
 	if err != nil {
-		return c.Respond(&tele.CallbackResponse{Text: "❌ خطا"})
+		return c.Respond(&tele.CallbackResponse{Text: messages.ErrGeneric})
 	}
 
 	// چک DisableLikes - نه Silent
@@ -246,7 +247,7 @@ func (h *Handler) DMHandler(c tele.Context) error {
 
 	if err != nil {
 
-		return c.Send("❌ خطا", MainMenuKeyboard())
+		return editOrSend(c, messages.ErrGeneric, MainMenuKeyboard())
 	}
 
 	targetIDstring := c.Data()
@@ -254,36 +255,36 @@ func (h *Handler) DMHandler(c tele.Context) error {
 
 	if err != nil {
 
-		return c.Send("❌ کاربر یافت نشد", MainMenuKeyboard())
+		return editOrSend(c, messages.ErrUserNotFound, MainMenuKeyboard())
 	}
 
 	if err := h.redis.SetUserState(u.TelegramID, session.StateDM); err != nil {
 		h.log.Error("failed to set user state", zap.Error(err))
-		return c.Send("❌ خطا در سیستم", MainMenuKeyboard())
+		return editOrSend(c, messages.ErrSystem, MainMenuKeyboard())
 	}
 
 	h.users.SetDMTarget(u.TelegramID, targetID)
 
 	c.Respond()
 
-	return c.Send("✉️ پیام خود را بنویسید:", CancelKeyboard())
+	return editOrSend(c, "✉️ پیام خود را بنویسید:", CancelKeyboard())
 
 }
 
 func (h *Handler) ChatRequestHandler(c tele.Context) error {
 	u, _, err := h.users.GetOrCreate(c.Sender().ID)
 	if err != nil {
-		return c.Send("❌ خطا", MainMenuKeyboard())
+		return editOrSend(c, messages.ErrGeneric, MainMenuKeyboard())
 	}
 
 	targetID, err := strconv.ParseInt(c.Data(), 10, 64)
 	if err != nil {
-		return c.Send("❌ کاربر یافت نشد", MainMenuKeyboard())
+		return editOrSend(c, messages.ErrUserNotFound, MainMenuKeyboard())
 	}
 
 	target, _, err := h.users.GetOrCreate(targetID)
 	if err != nil {
-		return c.Send("❌ خطا", MainMenuKeyboard())
+		return editOrSend(c, messages.ErrGeneric, MainMenuKeyboard())
 	}
 
 	if IsSilent(target) {
@@ -297,7 +298,7 @@ func (h *Handler) ChatRequestHandler(c tele.Context) error {
 		ChatRequestKeyboard(u)); err != nil {
 		h.log.Error("failed to send chat request", zap.Error(err))
 	}
-	return c.Send("✅ درخواست چت ارسال شد.")
+	return editOrSend(c, "✅ درخواست چت ارسال شد.")
 }
 
 func (h *Handler) ReportHandler(c tele.Context) error {
@@ -306,14 +307,14 @@ func (h *Handler) ReportHandler(c tele.Context) error {
 
 	if err != nil {
 
-		return c.Send("❌ خطا", MainMenuKeyboard())
+		return editOrSend(c, messages.ErrGeneric, MainMenuKeyboard())
 	}
 
 	targetIDstring := c.Data()
 	targetID, err := strconv.ParseInt(targetIDstring, 10, 64)
 
 	if err != nil {
-		return c.Send("❌ کاربر یافت نشد", MainMenuKeyboard())
+		return editOrSend(c, messages.ErrUserNotFound, MainMenuKeyboard())
 	}
 
 	if err := h.users.ReportUser(u.TelegramID, targetID, ""); err != nil {
@@ -331,7 +332,7 @@ func (h *Handler) NotifyOnlineHandler(c tele.Context) error {
 
 	if err != nil {
 
-		return c.Send("❌ خطا", MainMenuKeyboard())
+		return editOrSend(c, messages.ErrGeneric, MainMenuKeyboard())
 	}
 
 	targetIDstring := c.Data()
@@ -339,7 +340,7 @@ func (h *Handler) NotifyOnlineHandler(c tele.Context) error {
 
 	if err := h.users.AddOnlineNotify(targetID, u.TelegramID); err != nil {
 
-		return c.Send("❌ خطا", MainMenuKeyboard())
+		return editOrSend(c, messages.ErrGeneric, MainMenuKeyboard())
 	}
 
 	return c.Respond(&tele.CallbackResponse{Text: "🔔 وقتی آنلاین شد خبرت می‌دم!"})
@@ -359,10 +360,7 @@ func (h *Handler) EditProfileHandler(c tele.Context) error {
 }
 
 func (h *Handler) BackToEditProfileHandler(c tele.Context) error {
-	msg := "خب ، حالا چه کاری برات انجام بدم؟\n\n" +
-		"از منوی پایین👇 انتخاب کن"
-
-	return c.Reply(msg, MainMenuKeyboard(), tele.ModeHTML)
+	return c.Reply(messages.BackToMenu, MainMenuKeyboard(), tele.ModeHTML)
 }
 
 func (h *Handler) EditNameHandler(c tele.Context) error {
@@ -370,7 +368,7 @@ func (h *Handler) EditNameHandler(c tele.Context) error {
 
 	if err != nil {
 
-		return c.Send("❌ خطا", MainMenuKeyboard())
+		return editOrSend(c, messages.ErrGeneric, MainMenuKeyboard())
 	}
 
 	if c.Callback() != nil {
@@ -379,10 +377,10 @@ func (h *Handler) EditNameHandler(c tele.Context) error {
 
 	if err := h.redis.SetUserState(u.TelegramID, session.StateEditName); err != nil {
 		h.log.Error("failed to set user state", zap.Error(err))
-		return c.Send("❌ خطا در سیستم", MainMenuKeyboard())
+		return editOrSend(c, messages.ErrSystem, MainMenuKeyboard())
 	}
 
-	return c.Send("نام جدید خود را وارد کنید (فارسی، حداکثر 20 کاراکتر):", MainMenuKeyboard())
+	return editOrSend(c, messages.EditAskName, MainMenuKeyboard())
 
 }
 
@@ -391,17 +389,17 @@ func (h *Handler) EditGenderHandler(c tele.Context) error {
 
 	if err != nil {
 
-		return c.Send("❌ خطا", MainMenuKeyboard())
+		return editOrSend(c, messages.ErrGeneric, MainMenuKeyboard())
 	}
 	if c.Callback() != nil {
 		c.Respond()
 	}
 	if err := h.redis.SetUserState(u.TelegramID, session.StateEditGender); err != nil {
 		h.log.Error("failed to set user state", zap.Error(err))
-		return c.Send("❌ خطا در سیستم", MainMenuKeyboard())
+		return editOrSend(c, messages.ErrSystem, MainMenuKeyboard())
 	}
 
-	return c.Send("جنسیت جدید را انتخاب کنید:", GenderEditKeyboard())
+	return editOrSend(c, messages.EditAskGender, GenderEditKeyboard())
 
 }
 
@@ -411,7 +409,7 @@ func (h *Handler) SetGenderHandler(c tele.Context) error {
 
 	if err != nil {
 
-		return c.Send("❌ خطا", MainMenuKeyboard())
+		return editOrSend(c, messages.ErrGeneric, MainMenuKeyboard())
 	}
 
 	gender := string(user.Female)
@@ -423,14 +421,14 @@ func (h *Handler) SetGenderHandler(c tele.Context) error {
 
 	if err := h.users.UpdateOptionalField(u, "gender", gender); err != nil {
 
-		return c.Respond(&tele.CallbackResponse{Text: "❌ خطا در ثبت جنسیت"})
+		return c.Respond(&tele.CallbackResponse{Text: messages.ErrSetGender})
 	}
 
 	if c.Callback() != nil {
 		c.Respond()
 	}
 
-	return c.Send(utils.UpdateSuccessful, MainMenuKeyboard())
+	return editOrSend(c, messages.UpdateSuccessful, MainMenuKeyboard())
 
 }
 
@@ -440,7 +438,7 @@ func (h *Handler) EditAgeHandler(c tele.Context) error {
 
 	if err != nil {
 
-		return c.Send("❌ خطا", MainMenuKeyboard())
+		return editOrSend(c, messages.ErrGeneric, MainMenuKeyboard())
 	}
 
 	if c.Callback() != nil {
@@ -449,10 +447,10 @@ func (h *Handler) EditAgeHandler(c tele.Context) error {
 
 	if err := h.redis.SetUserState(u.TelegramID, session.StateEditAge); err != nil {
 		h.log.Error("failed to set user state", zap.Error(err))
-		return c.Send("❌ خطا در سیستم", MainMenuKeyboard())
+		return editOrSend(c, messages.ErrSystem, MainMenuKeyboard())
 	}
 
-	return c.Send("سن جدید خود را وارد کنید:", MainMenuKeyboard())
+	return editOrSend(c, messages.EditAskAge, MainMenuKeyboard())
 
 }
 
@@ -462,7 +460,7 @@ func (h *Handler) EditCityHandler(c tele.Context) error {
 
 	if err != nil {
 
-		return c.Send("❌ خطا", MainMenuKeyboard())
+		return editOrSend(c, messages.ErrGeneric, MainMenuKeyboard())
 	}
 
 	if c.Callback() != nil {
@@ -471,10 +469,10 @@ func (h *Handler) EditCityHandler(c tele.Context) error {
 
 	if err := h.redis.SetUserState(u.TelegramID, session.StateEditCity); err != nil {
 		h.log.Error("failed to set user state", zap.Error(err))
-		return c.Send("❌ خطا در سیستم", MainMenuKeyboard())
+		return editOrSend(c, messages.ErrSystem, MainMenuKeyboard())
 	}
 
-	return c.Send("نام شهر جدید را به فارسی وارد کنید:", MainMenuKeyboard())
+	return editOrSend(c, messages.EditAskCity, MainMenuKeyboard())
 
 }
 
@@ -484,7 +482,7 @@ func (h *Handler) EditProvinceHandler(c tele.Context) error {
 
 	if err != nil {
 
-		return c.Send("❌ خطا", MainMenuKeyboard())
+		return editOrSend(c, messages.ErrGeneric, MainMenuKeyboard())
 	}
 
 	if c.Callback() != nil {
@@ -493,10 +491,10 @@ func (h *Handler) EditProvinceHandler(c tele.Context) error {
 
 	if err := h.redis.SetUserState(u.TelegramID, session.StateEditProvince); err != nil {
 		h.log.Error("failed to set user state", zap.Error(err))
-		return c.Send("❌ خطا در سیستم", MainMenuKeyboard())
+		return editOrSend(c, messages.ErrSystem, MainMenuKeyboard())
 	}
 
-	return c.Send("نام استان جدید را از منوی زیر انتخاب کنید::", ProvinceKeyboard())
+	return editOrSend(c, messages.EditAskProvince, ProvinceKeyboard())
 
 }
 
@@ -506,7 +504,7 @@ func (h *Handler) EditPhotoHandler(c tele.Context) error {
 
 	if err != nil {
 
-		return c.Send("❌ خطا", MainMenuKeyboard())
+		return editOrSend(c, messages.ErrGeneric, MainMenuKeyboard())
 	}
 
 	if c.Callback() != nil {
@@ -515,10 +513,10 @@ func (h *Handler) EditPhotoHandler(c tele.Context) error {
 
 	if err := h.redis.SetUserState(u.TelegramID, session.StateEditPhoto); err != nil {
 		h.log.Error("failed to set user state", zap.Error(err))
-		return c.Send("❌ خطا در سیستم", MainMenuKeyboard())
+		return editOrSend(c, messages.ErrSystem, MainMenuKeyboard())
 	}
 
-	return c.Send("عکس جدید پروفایل خود را ارسال کنید:", MainMenuKeyboard())
+	return editOrSend(c, messages.EditAskPhoto, MainMenuKeyboard())
 
 }
 
@@ -527,12 +525,12 @@ func (h *Handler) EditGPSHandler(c tele.Context) error {
 
 	if err != nil {
 
-		return c.Send("❌ خطا", MainMenuKeyboard())
+		return editOrSend(c, messages.ErrGeneric, MainMenuKeyboard())
 	}
 	h.redis.SetUserState(u.TelegramID, session.StateEditGPS)
-	c.Send(utils.GpsMsg1)
+	editOrSend(c, messages.GpsMsg1)
 
-	return c.Send(utils.GpsMsg2, LocationKeyboard())
+	return editOrSend(c, messages.GpsMsg2, LocationKeyboard())
 
 }
 
@@ -542,23 +540,23 @@ func (h *Handler) HandleEditText(c tele.Context, u *user.User, field, value stri
 
 		switch err {
 		case service.ErrInvalidName:
-			return c.Send("❌ نام باید فارسی و حداکثر 20 کاراکتر باشد", CancelKeyboard())
+			return editOrSend(c, messages.ErrNameInvalid, CancelKeyboard())
 		case service.ErrInvalidAge:
-			return c.Send("❌ سن باید عدد بین 13 تا 100 باشد", CancelKeyboard())
+			return editOrSend(c, messages.ErrInvalidAgeMsg, CancelKeyboard())
 		case service.ErrInvalidCity:
-			return c.Send("❌ نام شهر باید فارسی باشد", CancelKeyboard())
+			return editOrSend(c, messages.ErrCityInvalid, CancelKeyboard())
 		case service.ErrInvalidProvince:
-			return c.Send("❌ نام استان باید از منو زیر انتخاب شود", CancelKeyboard())
+			return editOrSend(c, "❌ نام استان باید از منو زیر انتخاب شود", CancelKeyboard())
 		case service.ErrInvalidGender:
-			return c.Send("❌ جنسیت باید از لیست زیر انتخاب شود", GenderEditKeyboardWithCancel())
+			return editOrSend(c, "❌ جنسیت باید از لیست زیر انتخاب شود", GenderEditKeyboardWithCancel())
 		default:
-			return c.Send("❌ ورودی نامعتبر است", CancelKeyboard())
+			return editOrSend(c, messages.ErrInvalidInput, CancelKeyboard())
 		}
 	}
 
 	h.redis.ClearUserState(u.TelegramID)
 
-	return c.Send(utils.UpdateSuccessful, MainMenuKeyboard())
+	return editOrSend(c, messages.UpdateSuccessful, MainMenuKeyboard())
 
 }
 
@@ -568,19 +566,19 @@ func (h *Handler) HandleEditPhoto(c tele.Context, u *user.User) error {
 
 	if photos == nil {
 
-		return c.Send("❌ لطفاً یک عکس ارسال کنید", CancelKeyboard())
+		return editOrSend(c, "❌ لطفاً یک عکس ارسال کنید", CancelKeyboard())
 	}
 
 	fileID := photos.FileID
 
 	if err := h.users.UpdateOptionalField(u, "photo", fileID); err != nil {
 
-		return c.Send("❌ خطا در ذخیره عکس", CancelKeyboard())
+		return editOrSend(c, "❌ خطا در ذخیره عکس", CancelKeyboard())
 	}
 
 	h.redis.ClearUserState(u.TelegramID)
 
-	return c.Send("✅ عکس پروفایل به‌روزرسانی شد", MainMenuKeyboard())
+	return editOrSend(c, "✅ عکس پروفایل به‌روزرسانی شد", MainMenuKeyboard())
 
 }
 
@@ -590,7 +588,7 @@ func (h *Handler) HandleEditGPS(c tele.Context, u *user.User) error {
 
 	if loc == nil {
 
-		return c.Send("❌ لطفاً موقعیت مکانی ارسال کنید", CancelKeyboard())
+		return editOrSend(c, "❌ لطفاً موقعیت مکانی ارسال کنید", CancelKeyboard())
 	}
 
 	Lat := float64(loc.Lat)
@@ -598,12 +596,12 @@ func (h *Handler) HandleEditGPS(c tele.Context, u *user.User) error {
 
 	if err := h.users.UpdateGPS(u, Lat, Lng); err != nil {
 
-		return c.Send("❌ خطا در ذخیره موقعیت", CancelKeyboard())
+		return editOrSend(c, messages.ErrSaveGPS, CancelKeyboard())
 	}
 
 	h.redis.ClearUserState(u.TelegramID)
 
-	return c.Send("✅ موقعیت مکانی به‌روزرسانی شد", MainMenuKeyboard())
+	return editOrSend(c, messages.GPSUpdated, MainMenuKeyboard())
 
 }
 
@@ -613,14 +611,14 @@ func (h *Handler) CancelHandler(c tele.Context) error {
 
 	if err != nil {
 
-		return c.Send("❌ خطا", MainMenuKeyboard())
+		return editOrSend(c, messages.ErrGeneric, MainMenuKeyboard())
 	}
 
 	c.Respond()
 
 	h.redis.ClearUserState(u.TelegramID)
 
-	return c.Edit("❌ لغو شد", MainMenuKeyboard())
+	return c.Edit(messages.Cancelled, MainMenuKeyboard())
 
 }
 
@@ -635,7 +633,7 @@ func (h *Handler) ViewGPSHandler(c tele.Context) error {
 
 	if u.Latitude == nil || u.Longitude == nil {
 		return c.Respond(&tele.CallbackResponse{
-			Text:      "موقعیت GPS ثبت نشده است",
+			Text:      messages.GpsNotSet,
 			ShowAlert: true,
 		})
 	}
@@ -649,7 +647,7 @@ func (h *Handler) ViewGPSHandler(c tele.Context) error {
 
 func (h *Handler) NoGPSHandler(c tele.Context) error {
 	return c.Respond(&tele.CallbackResponse{
-		Text:      "❌ شما هنوز موقعیت GPS ثبت نکرده‌اید",
+		Text:      messages.GpsNotRegistered,
 		ShowAlert: true,
 	})
 }
@@ -661,11 +659,11 @@ func (h *Handler) NoGPSHandler(c tele.Context) error {
 
 // 	contacts, err := h.users.GetContacts(c.Sender().ID)
 // 	if err != nil {
-// 		return c.Send("❌ خطا در دریافت مخاطبین")
+// 		return editOrSend(c, "❌ خطا در دریافت مخاطبین")
 // 	}
 
 // 	if len(contacts) == 0 {
-// 		return c.Send("👫 هنوز مخاطبی ندارید")
+// 		return editOrSend(c, "👫 هنوز مخاطبی ندارید")
 // 	}
 
 // 	text := "👫 *مخاطبین شما:*\n\n"
@@ -679,7 +677,7 @@ func (h *Handler) NoGPSHandler(c tele.Context) error {
 // 		)
 // 	}
 
-// 	return c.Send(text, tele.ModeMarkdown)
+// 	return editOrSend(c, text, tele.ModeMarkdown)
 // }
 
 // ─── My Likes ─────────────────────────────────────────
@@ -766,12 +764,12 @@ func (h *Handler) buildLikesMessage(u *user.User, page int) (string, *tele.Reply
 func (h *Handler) MyLikesHandler(c tele.Context) error {
 	u, _, err := h.users.GetOrCreate(c.Sender().ID)
 	if err != nil {
-		return c.Send("❌ خطا", MainMenuKeyboard())
+		return editOrSend(c, messages.ErrGeneric, MainMenuKeyboard())
 	}
 
 	msg, kb, err := h.buildLikesMessage(u, 1)
 	if err != nil {
-		return c.Send("❌ خطا در دریافت لیست", MainMenuKeyboard())
+		return editOrSend(c, "❌ خطا در دریافت لیست", MainMenuKeyboard())
 	}
 
 	// If invoked via an inline callback, edit the existing message in place.
@@ -779,13 +777,13 @@ func (h *Handler) MyLikesHandler(c tele.Context) error {
 		c.Respond()
 		return c.Edit(msg, kb)
 	}
-	return c.Send(msg, kb)
+	return editOrSend(c, msg, kb)
 }
 
 func (h *Handler) LikesPageHandler(c tele.Context) error {
 	u, _, err := h.users.GetOrCreate(c.Sender().ID)
 	if err != nil {
-		return c.Respond(&tele.CallbackResponse{Text: "❌ خطا"})
+		return c.Respond(&tele.CallbackResponse{Text: messages.ErrGeneric})
 	}
 
 	c.Respond()
@@ -806,7 +804,7 @@ func (h *Handler) LikesPageHandler(c tele.Context) error {
 func (h *Handler) ToggleLikesHandler(c tele.Context) error {
 	u, _, err := h.users.GetOrCreate(c.Sender().ID)
 	if err != nil {
-		return c.Respond(&tele.CallbackResponse{Text: "❌ خطا"})
+		return c.Respond(&tele.CallbackResponse{Text: messages.ErrGeneric})
 	}
 
 	newVal := !u.DisableLikes
@@ -823,7 +821,7 @@ func (h *Handler) ToggleLikesHandler(c tele.Context) error {
 	u.DisableLikes = newVal
 	msg, kb, err := h.buildLikesMessage(u, 1)
 	if err != nil {
-		return c.Respond(&tele.CallbackResponse{Text: "❌ خطا"})
+		return c.Respond(&tele.CallbackResponse{Text: messages.ErrGeneric})
 	}
 
 	return c.Edit(msg, kb)
@@ -857,7 +855,7 @@ func silentStatusMessage(u *user.User) string {
 func (h *Handler) SilentHandler(c tele.Context) error {
 	u, _, err := h.users.GetOrCreate(c.Sender().ID)
 	if err != nil {
-		return c.Respond(&tele.CallbackResponse{Text: "❌ خطا"})
+		return c.Respond(&tele.CallbackResponse{Text: messages.ErrGeneric})
 	}
 
 	// lazy reset: اگه سایلنت موقت بود و وقتش گذشته، پاکش کن
@@ -873,7 +871,7 @@ func (h *Handler) SilentHandler(c tele.Context) error {
 		c.Respond()
 		return c.Edit(silentStatusMessage(u), SilentKeyboard(u))
 	}
-	return c.Send(silentStatusMessage(u), SilentKeyboard(u))
+	return editOrSend(c, silentStatusMessage(u), SilentKeyboard(u))
 }
 
 func (h *Handler) SilentForeverHandler(c tele.Context) error {
@@ -897,7 +895,7 @@ func (h *Handler) SilentOffHandler(c tele.Context) error {
 func (h *Handler) setSilent(c tele.Context, until *time.Time) error {
 	u, _, err := h.users.GetOrCreate(c.Sender().ID)
 	if err != nil {
-		return c.Respond(&tele.CallbackResponse{Text: "❌ خطا"})
+		return c.Respond(&tele.CallbackResponse{Text: messages.ErrGeneric})
 	}
 
 	u.SilentUntil = until
@@ -917,12 +915,12 @@ const contactsPageSize = 10
 func (h *Handler) AddContactHandler(c tele.Context) error {
 	u, _, err := h.users.GetOrCreate(c.Sender().ID)
 	if err != nil {
-		return c.Respond(&tele.CallbackResponse{Text: "❌ خطا"})
+		return c.Respond(&tele.CallbackResponse{Text: messages.ErrGeneric})
 	}
 
 	contactID, err := strconv.ParseInt(c.Callback().Data, 10, 64)
 	if err != nil {
-		return c.Respond(&tele.CallbackResponse{Text: "❌ خطا"})
+		return c.Respond(&tele.CallbackResponse{Text: messages.ErrGeneric})
 	}
 
 	// // چک کن state فعلی نداشته باشه
@@ -935,7 +933,7 @@ func (h *Handler) AddContactHandler(c tele.Context) error {
 	h.redis.SetUserState(u.TelegramID, session.StateAddContactLabel)
 
 	c.Respond()
-	return c.Send(
+	return editOrSend(c,
 		"👤 شما در حال ذخیره کردن کاربر در لیست مخاطبین خود هستید.\n\n"+
 			"در صورت تمایل برای اینکار عنوانی که بعدا بتوانید این کاربر را بیاورید ارسال کنید "+
 			"یا در صورت عدم تمایل از منوی پایین روی گزینه «بازگشت ↩️» کلیک کنید.",
@@ -947,23 +945,23 @@ func (h *Handler) AddContactHandler(c tele.Context) error {
 func (h *Handler) HandleAddContactLabel(c tele.Context) error {
 	label := strings.TrimSpace(c.Text())
 	if label == "" {
-		return c.Send("⚠️ لطفاً یک عنوان وارد کنید.")
+		return editOrSend(c, "⚠️ لطفاً یک عنوان وارد کنید.")
 	}
 
 	contactID, err := h.redis.GetPendingContact(c.Sender().ID)
 	if err != nil {
 		h.redis.ClearUserState(c.Sender().ID)
-		return c.Send("❌ خطا، لطفاً دوباره امتحان کنید.", MainMenuKeyboard())
+		return editOrSend(c, "❌ خطا، لطفاً دوباره امتحان کنید.", MainMenuKeyboard())
 	}
 
 	if err := h.users.AddContact(c.Sender().ID, contactID, label); err != nil {
-		return c.Send("❌ خطا در ذخیره‌سازی.", MainMenuKeyboard())
+		return editOrSend(c, "❌ خطا در ذخیره‌سازی.", MainMenuKeyboard())
 	}
 
 	h.redis.ClearUserState(c.Sender().ID)
 	h.redis.DelPendingContact(c.Sender().ID)
 
-	return c.Send(
+	return editOrSend(c,
 		"👥 مخاطب ذخیره شد ✅\n\nتوجه: مخاطبین خود را می‌توانید از قسمت مخاطبین که در بخش پروفایل قرار دارد مشاهده کنید.\n\nخب، حالا چه کاری برات انجام بدم؟\n\nاز منوی پایین👇 انتخاب کن",
 		MainMenuKeyboard(),
 	)
@@ -973,7 +971,7 @@ func (h *Handler) HandleAddContactLabel(c tele.Context) error {
 func (h *Handler) RemoveContactHandler(c tele.Context) error {
 	contactID, err := strconv.ParseInt(c.Callback().Data, 10, 64)
 	if err != nil {
-		return c.Respond(&tele.CallbackResponse{Text: "❌ خطا"})
+		return c.Respond(&tele.CallbackResponse{Text: messages.ErrGeneric})
 	}
 
 	if err := h.users.RemoveContact(c.Sender().ID, contactID); err != nil {
@@ -1000,7 +998,7 @@ func (h *Handler) MyContactsHandler(c tele.Context) error {
 func (h *Handler) ContactsPageHandler(c tele.Context) error {
 	page, err := strconv.Atoi(c.Callback().Data)
 	if err != nil {
-		return c.Respond(&tele.CallbackResponse{Text: "❌ خطا"})
+		return c.Respond(&tele.CallbackResponse{Text: messages.ErrGeneric})
 	}
 	c.Respond()
 	return h.editContactsPage(c, page)
@@ -1009,15 +1007,15 @@ func (h *Handler) ContactsPageHandler(c tele.Context) error {
 func (h *Handler) sendContactsPage(c tele.Context, page int) error {
 	msg, kb, err := h.buildContactsPage(c.Sender().ID, page)
 	if err != nil {
-		return c.Send("❌ خطا در دریافت مخاطبین.")
+		return editOrSend(c, "❌ خطا در دریافت مخاطبین.")
 	}
-	return c.Send(msg, kb)
+	return editOrSend(c, msg, kb)
 }
 
 func (h *Handler) editContactsPage(c tele.Context, page int) error {
 	msg, kb, err := h.buildContactsPage(c.Sender().ID, page)
 	if err != nil {
-		return c.Respond(&tele.CallbackResponse{Text: "❌ خطا"})
+		return c.Respond(&tele.CallbackResponse{Text: messages.ErrGeneric})
 	}
 	return c.Edit(msg, kb)
 }
@@ -1079,9 +1077,9 @@ func (h *Handler) buildContactsPage(ownerID int64, page int) (string, *tele.Repl
 // حذف همه مخاطبین
 func (h *Handler) DeleteAllContactsHandler(c tele.Context) error {
 	if err := h.users.DeleteAllContacts(c.Sender().ID); err != nil {
-		return c.Send("❌ خطا در حذف مخاطبین.")
+		return editOrSend(c, "❌ خطا در حذف مخاطبین.")
 	}
-	return c.Send("🗑 همه مخاطبین حذف شدند.", MainMenuKeyboard())
+	return editOrSend(c, "🗑 همه مخاطبین حذف شدند.", MainMenuKeyboard())
 }
 
 // blocked
@@ -1091,11 +1089,11 @@ const blocksPageSize = 10
 func (h *Handler) BlockHandler(c tele.Context) error {
 	u, _, err := h.users.GetOrCreate(c.Sender().ID)
 	if err != nil {
-		return c.Respond(&tele.CallbackResponse{Text: "❌ خطا"})
+		return c.Respond(&tele.CallbackResponse{Text: messages.ErrGeneric})
 	}
 	targetID, err := strconv.ParseInt(c.Callback().Data, 10, 64)
 	if err != nil {
-		return c.Respond(&tele.CallbackResponse{Text: "❌ خطا"})
+		return c.Respond(&tele.CallbackResponse{Text: messages.ErrGeneric})
 	}
 	if err := h.users.BlockUser(u.TelegramID, targetID); err != nil {
 		return c.Respond(&tele.CallbackResponse{Text: "❌ خطا در بلاک کردن"})
@@ -1106,7 +1104,7 @@ func (h *Handler) BlockHandler(c tele.Context) error {
 	kb.Inline(kb.Row(ack))
 
 	c.Respond()
-	return c.Send("🚨 کاربر بلاک شد.\n\nاین کاربر امکان ارسال درخواست چت و پیام دایرکت به شما را نخواهد داشت.", kb)
+	return editOrSend(c, "🚨 کاربر بلاک شد.\n\nاین کاربر امکان ارسال درخواست چت و پیام دایرکت به شما را نخواهد داشت.", kb)
 }
 
 // تایید پیام بلاک
@@ -1120,11 +1118,11 @@ func (h *Handler) BlockAckHandler(c tele.Context) error {
 func (h *Handler) UnblockHandler(c tele.Context) error {
 	u, _, err := h.users.GetOrCreate(c.Sender().ID)
 	if err != nil {
-		return c.Respond(&tele.CallbackResponse{Text: "❌ خطا"})
+		return c.Respond(&tele.CallbackResponse{Text: messages.ErrGeneric})
 	}
 	targetID, err := strconv.ParseInt(c.Callback().Data, 10, 64)
 	if err != nil {
-		return c.Respond(&tele.CallbackResponse{Text: "❌ خطا"})
+		return c.Respond(&tele.CallbackResponse{Text: messages.ErrGeneric})
 	}
 	if err := h.users.UnblockUser(u.TelegramID, targetID); err != nil {
 		return c.Respond(&tele.CallbackResponse{Text: "❌ خطا در آنبلاک کردن"})
@@ -1146,7 +1144,7 @@ func (h *Handler) BlocksPageHandler(c tele.Context) error {
 	page, err := strconv.Atoi(c.Callback().Data)
 
 	if err != nil {
-		return c.Respond(&tele.CallbackResponse{Text: "❌ خطا"})
+		return c.Respond(&tele.CallbackResponse{Text: messages.ErrGeneric})
 	}
 	c.Respond()
 	return h.editBlocksPage(c, page)
@@ -1155,25 +1153,25 @@ func (h *Handler) BlocksPageHandler(c tele.Context) error {
 // حذف همه بلاک‌شده‌ها
 func (h *Handler) DeleteAllBlocksHandler(c tele.Context) error {
 	if err := h.users.DeleteAllBlocks(c.Sender().ID); err != nil {
-		return c.Send("❌ خطا در حذف.")
+		return editOrSend(c, "❌ خطا در حذف.")
 	}
-	return c.Send("🗑 همه بلاک‌شده‌ها حذف شدند.", MainMenuKeyboard())
+	return editOrSend(c, "🗑 همه بلاک‌شده‌ها حذف شدند.", MainMenuKeyboard())
 }
 
 // ارسال صفحه جدید
 func (h *Handler) sendBlocksPage(c tele.Context, page int) error {
 	msg, kb, err := h.buildBlocksPage(c.Sender().ID, page)
 	if err != nil {
-		return c.Send("❌ خطا در دریافت لیست.")
+		return editOrSend(c, "❌ خطا در دریافت لیست.")
 	}
-	return c.Send(msg, kb)
+	return editOrSend(c, msg, kb)
 }
 
 // ویرایش صفحه موجود
 func (h *Handler) editBlocksPage(c tele.Context, page int) error {
 	msg, kb, err := h.buildBlocksPage(c.Sender().ID, page)
 	if err != nil {
-		return c.Respond(&tele.CallbackResponse{Text: "❌ خطا"})
+		return c.Respond(&tele.CallbackResponse{Text: messages.ErrGeneric})
 	}
 	return c.Edit(msg, kb)
 }

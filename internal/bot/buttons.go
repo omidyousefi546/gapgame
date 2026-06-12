@@ -177,7 +177,6 @@ var (
 	btnEndChat         = tele.Btn{Text: "پایان چت"}
 	btnConfirmEndChat  = tele.Btn{Unique: "confirm_end_chat"}
 	btnCancelEndChat   = tele.Btn{Unique: "cancel_end_chat"}
-	btnCancelQueue     = tele.Btn{Unique: "cancel_queue"}
 )
 
 // Game menu (inline keyboard)

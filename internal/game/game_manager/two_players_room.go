@@ -59,7 +59,7 @@ func (rm *RoomManager) playerRoomKey(id int64) string {
 
 type serializableRoom struct {
 	Room
-	GameType string          `json:"game_type"`
+	GameType  string          `json:"game_type"`
 	StateData json.RawMessage `json:"state_data"`
 }
 

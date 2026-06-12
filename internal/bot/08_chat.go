@@ -9,6 +9,7 @@ import (
 	"GapGame/internal/session"
 	"GapGame/internal/user"
 	"GapGame/internal/utils"
+	"GapGame/pkg/messages"
 
 	"go.uber.org/zap"
 	tele "gopkg.in/telebot.v3"
@@ -23,7 +24,7 @@ const (
 func (h *Handler) ConnectHandler(c tele.Context) error {
 	u, _, err := h.users.GetOrCreate(c.Sender().ID)
 	if err != nil {
-		return c.Send("❌ خطا")
+		return c.Send(messages.ErrGeneric)
 	}
 	c.Respond()
 
@@ -31,13 +32,26 @@ func (h *Handler) ConnectHandler(c tele.Context) error {
 	hasActiveChat, err := h.redis.HasActiveChat(u.TelegramID)
 	if err != nil {
 		h.log.Error("redis error checking active chat", zap.Error(err))
-		return c.Send("❌ خطا در سیستم")
+		return c.Send(messages.ErrSystem)
 	}
 	if hasActiveChat {
-		return c.Send("شما الان در یک چت فعال هستید. ابتدا چت را پایان دهید.", ActiveChatKeyboard())
+		return c.Send(messages.AlreadyInActive, ActiveChatKeyboard())
 	}
 
-	return c.Send("🔗 به یه ناشناس وصلم کن!\n\n👇 به کی وصلت کنم؟ انتخاب کن", ConnectMenuKeyboard())
+	return editOrSend(c, messages.ConnectIntro, ConnectMenuKeyboard())
+}
+
+// costForFilter returns the coin cost of a queue filter. Centralised so the
+// «Search Again» flow charges exactly what the original search charged.
+func costForFilter(filter string) int {
+	switch filter {
+	case "male", "female":
+		return chatCostGender
+	case "nearby_male", "nearby_female":
+		return chatCostNearby
+	default:
+		return 0
+	}
 }
 
 func (h *Handler) ConnectTypeHandler(c tele.Context) error {
@@ -52,31 +66,23 @@ func (h *Handler) ConnectTypeHandler(c tele.Context) error {
 	hasActiveChat, err := h.redis.HasActiveChat(u.TelegramID)
 	if err != nil {
 		h.log.Error("redis error checking active chat", zap.Error(err))
-		return c.Send("❌ خطا در سیستم")
+		return c.Send(messages.ErrSystem)
 	}
 	if hasActiveChat {
-		return c.Send("شما الان در یک چت فعال هستید.")
+		return editOrSend(c, messages.AlreadyInActive)
 	}
 
 	switch data {
 	case "nearby":
 		hasGPS := u.Latitude != nil && u.Longitude != nil
-		return c.Edit(
-			"🔗 به یه ناشناس وصلم کن!\n\n👇 چه کسی رو از افراد نزدیکت پیدا کنم؟",
-			NearbyMenuKeyboard(hasGPS),
-		)
+		return editOrSend(c, messages.ConnectNearbyIntro, NearbyMenuKeyboard(hasGPS))
 	case "random":
 		return h.joinQueue(c, u, "random", 0)
-	case "male":
+	case "male", "female":
 		if u.Coins < chatCostGender {
-			return c.Send(fmt.Sprintf("❌ برای جستجوی پسر به %d سکه نیاز داری.\nسکه فعلی: %d", chatCostGender, u.Coins))
+			return editOrSend(c, fmt.Sprintf(messages.NeedCoinsForGender, chatCostGender, u.Coins))
 		}
-		return h.joinQueue(c, u, "male", chatCostGender)
-	case "female":
-		if u.Coins < chatCostGender {
-			return c.Send(fmt.Sprintf("❌ برای جستجوی دختر به %d سکه نیاز داری.\nسکه فعلی: %d", chatCostGender, u.Coins))
-		}
-		return h.joinQueue(c, u, "female", chatCostGender)
+		return h.joinQueue(c, u, data, chatCostGender)
 	}
 	return nil
 }
@@ -92,23 +98,40 @@ func (h *Handler) NearbyTypeHandler(c tele.Context) error {
 	switch data {
 	case "nearby_near":
 		if u.Latitude == nil {
-			return c.Send("❌ موقعیت مکانی ثبت نشده. ابتدا GPS رو در پروفایل ثبت کن.")
+			return editOrSend(c, messages.NeedGPSForNearby)
 		}
 		return h.joinQueue(c, u, "nearby", 0)
 	case "nearby_all":
 		return h.joinQueue(c, u, "random", 0)
-	case "nearby_male":
+	case "nearby_male", "nearby_female":
 		if u.Coins < chatCostNearby {
-			return c.Send(fmt.Sprintf("❌ به %d سکه نیاز داری.\nسکه فعلی: %d", chatCostNearby, u.Coins))
+			return editOrSend(c, fmt.Sprintf(messages.NeedCoinsForGender, chatCostNearby, u.Coins))
 		}
-		return h.joinQueue(c, u, "nearby_male", chatCostNearby)
-	case "nearby_female":
-		if u.Coins < chatCostNearby {
-			return c.Send(fmt.Sprintf("❌ به %d سکه نیاز داری.\nسکه فعلی: %d", chatCostNearby, u.Coins))
-		}
-		return h.joinQueue(c, u, "nearby_female", chatCostNearby)
+		return h.joinQueue(c, u, data, chatCostNearby)
 	}
 	return nil
+}
+
+// SearchAgainHandler re-runs the matching queue search with the exact filter
+// the user previously selected (carried in the callback data).
+func (h *Handler) SearchAgainHandler(c tele.Context) error {
+	u, _, err := h.users.GetOrCreate(c.Sender().ID)
+	if err != nil {
+		return c.Respond(&tele.CallbackResponse{Text: messages.ErrGeneric})
+	}
+	c.Respond()
+
+	filter := c.Callback().Data
+	if filter == "" {
+		filter = "random"
+	}
+
+	cost := costForFilter(filter)
+	if cost > 0 && u.Coins < cost {
+		return editOrSend(c, fmt.Sprintf(messages.NeedCoinsForGender, cost, u.Coins))
+	}
+
+	return h.joinQueue(c, u, filter, cost)
 }
 
 // joinQueue — کسر سکه + ورود به صف (worker مچ میکنه)
@@ -119,41 +142,43 @@ func (h *Handler) joinQueue(c tele.Context, u *user.User, filter string, cost in
 	// ✅ مرحله 1: بررسی اینکه کاربر قبلاً در صف نیست
 	inQueue, err := h.redis.IsInQueue(u.TelegramID)
 	if err != nil {
-		return c.Send("❌ خطای سیستم")
+		return c.Send(messages.ErrSystem)
 	}
 	if inQueue {
-		return c.Send("⏳ شما قبلاً در صف هستید.\nبرای لغو می‌تونید دکمه‌ی پایین رو بزنید.")
+		return editOrSend(c, messages.AlreadyInQueue)
 	}
 
 	// ✅ مرحله 2: بررسی چت فعال موجود
 	hasActiveChat, err := h.redis.HasActiveChat(u.TelegramID)
 	if err != nil {
-		return c.Send("❌ خطای سیستم")
+		return c.Send(messages.ErrSystem)
 	}
 	if hasActiveChat {
-		return c.Send("🚫 شما الان در یک چت فعال هستید!\nابتدا چت را پایان دهید.")
+		return editOrSend(c, messages.AlreadyInActive2)
 	}
 
 	// Deduct coins (the service re-reads the user, so we report the message
 	// using the in-memory snapshot which is accurate enough for the user).
 	if cost > 0 {
 		if err := h.users.DeductCoins(u.TelegramID, cost); err != nil {
-			return c.Send(fmt.Sprintf(
-				"❌ سکه کافی نداری!\nموجودی فعلی: %d سکه\nبرای این جستجو نیاز به %d سکه داری.",
-				u.Coins, cost,
-			))
+			return editOrSend(c, fmt.Sprintf(messages.NotEnoughCoins, u.Coins, cost))
 		}
 	}
 
-	// ✅ مرحله 3: ارسال پیام "در حال جستجو"
-	// ابتدا پیام قبلی (منو) را حذف می‌کنیم تا صفحه خلوت شود و مطمئن شویم پیام جدید شناسه دارد
-	if c.Callback() != nil {
-		_ = h.bot.Delete(c.Message())
+	// ✅ مرحله 3: نمایش پیام "در حال جستجو"
+	// روی کلیک دکمه شیشه‌ای، همان پیام منو ویرایش می‌شود (بدون دکمه لغو —
+	// جستجو بعد از ۲ دقیقه به‌صورت خودکار تمام می‌شود).
+	var msg *tele.Message
+	if c.Callback() != nil && c.Message() != nil {
+		if edited, eerr := h.bot.Edit(c.Message(), messages.Searching); eerr == nil {
+			msg = edited
+		}
 	}
-
-	msg, err := h.bot.Send(c.Recipient(), "🔍 در حال جستجو...\nمنتظر بمون تا یه نفر پیدا بشه!", WaitingKeyboard())
-	if err != nil {
-		h.log.Error("error sending search message", zap.Error(err))
+	if msg == nil {
+		msg, err = h.bot.Send(c.Recipient(), messages.Searching)
+		if err != nil {
+			h.log.Error("error sending search message", zap.Error(err))
+		}
 	}
 
 	entry := &session.QueueEntry{
@@ -175,18 +200,12 @@ func (h *Handler) joinQueue(c tele.Context, u *user.User, filter string, cost in
 		if cost > 0 {
 			h.users.AwardCoinsByTelegramID(u.TelegramID, cost, "enqueue_error")
 		}
-		if msg != nil {
-			h.bot.Delete(msg)
-		}
-		return c.Send("❌ خطا در ورود به صف")
+		return editOrSend(c, messages.QueueJoinError)
 	}
 
 	// ✅ مرحله 5: علامت‌گذاری کاربر به‌عنوان "در صف"
 	if err := h.redis.JoinQueue(u.TelegramID); err != nil {
-		if msg != nil {
-			h.bot.Delete(msg)
-		}
-		return c.Send("❌ خطا در ورود به صف")
+		return editOrSend(c, messages.QueueJoinError)
 	}
 
 	return nil
@@ -204,7 +223,7 @@ func (h *Handler) ViewChatProfileHandler(c tele.Context) error {
 
 	cs, err := h.redis.GetActiveChat(ctx, u.TelegramID)
 	if err != nil || cs == nil {
-		return c.Send("❌ چت فعالی وجود ندارد")
+		return c.Send(messages.NoActiveChat)
 	}
 
 	partnerID := cs.User1ID
@@ -214,18 +233,18 @@ func (h *Handler) ViewChatProfileHandler(c tele.Context) error {
 
 	partner, err := h.users.GetByTelegramID(partnerID)
 	if err != nil {
-		return c.Send("❌ خطا در دریافت پروفایل")
+		return c.Send(messages.ErrProfileFetch)
 	}
 
-	sysMsg := "🤖 پیام سیستم 👇\n\nمخاطب شما 《 پروفایل هاید چت 》 شما را مشاهده کرد.\n\n⚠️ توجه: پروفایل هاید چت اطلاعاتی است که در بخش پروفایل ربات ثبت کرده‌اید!"
-	h.bot.Send(&tele.User{ID: partnerID}, sysMsg)
+	h.bot.Send(&tele.User{ID: partnerID}, messages.ProfileViewedNotice)
 
 	return h.sendProfileMessage(c, u, partner, false)
 }
 
 func (h *Handler) EndChatHandler(c tele.Context) error {
 	c.Respond()
-	return c.Send("🤖 پیام سیستم 👇\n\nمطمئنی میخوای چت رو قطع کنی؟", ConfirmEndChatKeyboard())
+	// "پایان چت" is a reply-keyboard button, so a new message is expected here.
+	return editOrSend(c, messages.ConfirmEndChat, ConfirmEndChatKeyboard())
 }
 
 func (h *Handler) ConfirmEndChatHandler(c tele.Context) error {
@@ -240,7 +259,7 @@ func (h *Handler) ConfirmEndChatHandler(c tele.Context) error {
 	// ✅ استفاده از GetActiveChat برای دریافت ChatSession
 	cs, err := h.redis.GetActiveChat(ctx, u.TelegramID)
 	if err != nil || cs == nil {
-		return c.Edit("❌ چتی فعال نیست.")
+		return c.Edit(messages.NoActiveChatShort)
 	}
 
 	partnerID := cs.User2ID
@@ -253,71 +272,19 @@ func (h *Handler) ConfirmEndChatHandler(c tele.Context) error {
 		// Error already logged by redis manager
 	}
 
-	// ✅ ارسال پیام به کاربر شروع‌کننده
-	h.bot.Send(&tele.User{ID: u.TelegramID}, fmt.Sprintf(
-		"🎌 چت شما با /user_%d توسط شما پایان یافت.\nمیتونی با زدن '🚫 گزارش کاربر' در پروفایلش، تخلف رو گزارش بدی (/ghavanin).",
-		partnerID,
-	), MainMenuKeyboard())
+	// ✅ ویرایش پیام تایید به پیام پایان چت (به‌جای ارسال پیام جدید)
+	editOrSend(c, fmt.Sprintf(messages.ChatEndedByYou, partnerID))
+	// کیبورد منوی اصلی فقط با پیام جدید قابل ارسال است.
+	h.bot.Send(&tele.User{ID: u.TelegramID}, messages.BackToMenu, MainMenuKeyboard())
 
 	// ✅ ارسال پیام به شریک چت
-	h.bot.Send(&tele.User{ID: partnerID}, fmt.Sprintf(
-		"🎌 چت شما با /user_%d توسط مخاطبت پایان یافت.\nمیتونی با زدن '🚫 گزارش کاربر' در پروفایلش، تخلف رو گزارش بدی (/ghavanin).",
-		u.TelegramID,
+	_, err = h.bot.Send(&tele.User{ID: partnerID}, fmt.Sprintf(
+		messages.ChatEndedByPartner, u.TelegramID,
 	), MainMenuKeyboard())
-
-	// ✅ حذف دکمه callback
-	return c.Delete()
+	return err
 }
 
 func (h *Handler) CancelEndChatHandler(c tele.Context) error {
 	c.Respond()
 	return c.Delete()
-}
-
-func (h *Handler) CancelQueueHandler(c tele.Context) error {
-	u, _, err := h.users.GetOrCreate(c.Sender().ID)
-	if err != nil {
-		return c.Respond()
-	}
-	c.Respond()
-
-	ctx, cancel := utils.NewRequestContext()
-	defer cancel()
-
-	inQueue, err := h.redis.IsInQueue(u.TelegramID)
-	if err != nil {
-		h.log.Error("redis error checking queue", zap.Error(err))
-		return c.Send("❌ خطا در سیستم")
-	}
-
-	var refund int
-	if inQueue {
-		// Refund the join cost (if any) and pull the entry from the queue.
-		if filter, ferr := h.redis.GetWaitingFilter(ctx, u.TelegramID); ferr == nil && filter != "" {
-			if entry, gerr := h.redis.GetQueueEntry(ctx, u.TelegramID, filter); gerr == nil && entry != nil && entry.Cost > 0 {
-				if aerr := h.users.AwardCoinsByTelegramID(u.TelegramID, entry.Cost, "cancel_queue"); aerr != nil {
-					h.log.Error("refund failed", zap.Error(aerr))
-				} else {
-					refund = entry.Cost
-				}
-			}
-			if rerr := h.redis.RemoveFromQueue(ctx, u.TelegramID, filter); rerr != nil {
-				h.log.Error("redis error removing from queue", zap.Error(rerr))
-			}
-		}
-		if err := h.redis.LeaveQueue(u.TelegramID); err != nil {
-			h.log.Error("redis error leaving queue", zap.Error(err))
-		}
-	}
-
-	// Remove the "searching…" inline message so the chat stays clean.
-	if c.Callback() != nil {
-		_ = c.Delete()
-	}
-
-	msg := "❌ از صف خارج شدید."
-	if refund > 0 {
-		msg = fmt.Sprintf("❌ از صف خارج شدید.\n💰 %d سکه‌ات برگشت داده شد.", refund)
-	}
-	return c.Send(msg, MainMenuKeyboard())
 }

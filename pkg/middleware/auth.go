@@ -4,6 +4,8 @@ import (
 	tele "gopkg.in/telebot.v3"
 )
 
+// RequireAdmin only lets configured admin IDs through. Maps are reference
+// types in Go, so passing the map itself (not a pointer) is sufficient.
 func RequireAdmin(admins *map[int64]bool) tele.MiddlewareFunc {
 
 	return func(next tele.HandlerFunc) tele.HandlerFunc {
@@ -12,7 +14,8 @@ func RequireAdmin(admins *map[int64]bool) tele.MiddlewareFunc {
 
 			user := c.Sender()
 
-			if user == nil || !(*admins)[user.ID] {
+			if user == nil || admins == nil || !(*admins)[user.ID] {
+				// Silently ignore: don't advertise admin commands to users.
 				return nil
 			}
 

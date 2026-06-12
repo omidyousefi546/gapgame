@@ -1,6 +1,7 @@
 package bot
 
 import (
+	"GapGame/pkg/messages"
 	"fmt"
 	"strconv"
 	"time"
@@ -16,17 +17,17 @@ import (
 func (h *Handler) AcceptChatHandler(c tele.Context) error {
 	target, _, err := h.users.GetOrCreate(c.Sender().ID)
 	if err != nil {
-		return c.Respond(&tele.CallbackResponse{Text: "❌ خطا"})
+		return c.Respond(&tele.CallbackResponse{Text: messages.ErrGeneric})
 	}
 
 	requesterID, err := strconv.ParseInt(c.Data(), 10, 64)
 	if err != nil {
-		return c.Respond(&tele.CallbackResponse{Text: "❌ کاربر یافت نشد"})
+		return c.Respond(&tele.CallbackResponse{Text: messages.ErrUserNotFound})
 	}
 
 	requester, _, err := h.users.GetOrCreate(requesterID)
 	if err != nil {
-		return c.Respond(&tele.CallbackResponse{Text: "❌ کاربر یافت نشد"})
+		return c.Respond(&tele.CallbackResponse{Text: messages.ErrUserNotFound})
 	}
 
 	// Create chat session
@@ -40,36 +41,36 @@ func (h *Handler) AcceptChatHandler(c tele.Context) error {
 	}
 
 	if err := h.redis.SetActiveChat(ctx, chatSession); err != nil {
-		return c.Respond(&tele.CallbackResponse{Text: "❌ خطا در ایجاد چت"})
+		return c.Respond(&tele.CallbackResponse{Text: messages.ErrCreateChat})
 	}
 
 	c.Respond()
 
-	if _, err := h.bot.Send(&tele.User{ID: requester.TelegramID}, "✅ درخواست چت پذیرفته شد! شروع کنید 💬", ActiveChatKeyboard()); err != nil {
+	if _, err := h.bot.Send(&tele.User{ID: requester.TelegramID}, messages.ChatRequestAccepted, ActiveChatKeyboard()); err != nil {
 		h.log.Error("failed to notify requester", zap.Error(err))
 	}
 
-	return c.Send("✅ چت شروع شد! 💬", ActiveChatKeyboard())
+	return editOrSend(c, messages.ChatStarted, ActiveChatKeyboard())
 }
 
 func (h *Handler) RejectChatHandler(c tele.Context) error {
 	requesterID, err := strconv.ParseInt(c.Data(), 10, 64)
 	if err != nil {
-		return c.Respond(&tele.CallbackResponse{Text: "❌ خطا"})
+		return c.Respond(&tele.CallbackResponse{Text: messages.ErrGeneric})
 	}
 
 	requester, _, err := h.users.GetOrCreate(requesterID)
 	if err != nil {
-		return c.Respond(&tele.CallbackResponse{Text: "❌ خطا"})
+		return c.Respond(&tele.CallbackResponse{Text: messages.ErrGeneric})
 	}
 
 	c.Respond()
 
-	if _, err := h.bot.Send(&tele.User{ID: requester.TelegramID}, "❌ درخواست چت رد شد."); err != nil {
+	if _, err := h.bot.Send(&tele.User{ID: requester.TelegramID}, messages.ChatRequestRejected); err != nil {
 		h.log.Error("failed to notify requester", zap.Error(err))
 	}
 
-	return c.Send("❌ درخواست رد شد.")
+	return editOrSend(c, messages.RequestRejected)
 }
 
 // forwardTextToPartner forwards a text message to the chat partner
@@ -91,26 +92,26 @@ func (h *Handler) handleDMMessage(c tele.Context, u *user.User, text string) err
 	if err != nil {
 
 		h.redis.ClearUserState(u.TelegramID)
-		return c.Send("❌ دوباره تلاش کنید", MainMenuKeyboard())
+		return editOrSend(c, messages.ErrTryAgain, MainMenuKeyboard())
 	}
 
 	target, _, err := h.users.GetOrCreate(targetID)
 
 	if err != nil {
 
-		return c.Send("❌ کاربر یافت نشد", MainMenuKeyboard())
+		return editOrSend(c, messages.ErrUserNotFound, MainMenuKeyboard())
 	}
 
 	senderID := fmt.Sprintf("/user_%s", u.ID)
 
 	if _, err := h.bot.Send(&tele.User{ID: target.TelegramID},
-		"✉️ پیام از "+senderID+":\n\n"+text); err != nil {
+		fmt.Sprintf(messages.DMFrom, senderID, text)); err != nil {
 		h.log.Error("failed to send DM to target", zap.Error(err))
 	}
 	h.redis.ClearUserState(u.TelegramID)
 
 	h.redis.ClearDMTarget(u.TelegramID)
 
-	return c.Send("✅ پیام ارسال شد.", MainMenuKeyboard())
+	return editOrSend(c, messages.DMSent, MainMenuKeyboard())
 
 }

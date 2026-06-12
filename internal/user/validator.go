@@ -114,41 +114,38 @@ func isValidNameFormat(name string) bool {
 // isValidProvince checks if province is in the valid list
 func isValidProvince(province string) bool {
 	validProvinces := map[string]bool{
-// isValidNameFormat checks if name contains only allowed characters
-"آذربایجان شرقی":          true, 
-"آذربایجان غربی":          true, 
-"اردبیل":          true, 
-"اصفهان":          true,
- "البرز":          true,
-	"ایلام":          true, 
-	"بوشهر":          true, 
-	"تهران":          true, 
-	"چهارمحال و بختیاری":          true, 
-	"خراسان جنوبی":          true,
-	"خراسان رضوی":          true, 
-	"خراسان شمالی":          true, 
-	"خوزستان":          true, 
-	"زنجان":          true, 
-	"سمنان":          true,
-	"سیستان و بلوچستان":          true, 
-	"فارس":          true, 
-	"قزوین":          true, 
-	"قم":          true, 
-	"کردستان":          true,
-	"کرمان":          true, 
-	"کرمانشاه":          true, 
-	"کهگیلویه و بویراحمد":          true, 
-	"گلستان":          true, 
-	"گیلان":          true,
-	"لرستان":          true, 
-	"مازندران":          true, 
-	"مرکزی":          true, 
-	"هرمزگان":          true, 
-	"همدان":          true, 
-	"یزد":          true,
-
-
-		
+		// isValidNameFormat checks if name contains only allowed characters
+		"آذربایجان شرقی":      true,
+		"آذربایجان غربی":      true,
+		"اردبیل":              true,
+		"اصفهان":              true,
+		"البرز":               true,
+		"ایلام":               true,
+		"بوشهر":               true,
+		"تهران":               true,
+		"چهارمحال و بختیاری":  true,
+		"خراسان جنوبی":        true,
+		"خراسان رضوی":         true,
+		"خراسان شمالی":        true,
+		"خوزستان":             true,
+		"زنجان":               true,
+		"سمنان":               true,
+		"سیستان و بلوچستان":   true,
+		"فارس":                true,
+		"قزوین":               true,
+		"قم":                  true,
+		"کردستان":             true,
+		"کرمان":               true,
+		"کرمانشاه":            true,
+		"کهگیلویه و بویراحمد": true,
+		"گلستان":              true,
+		"گیلان":               true,
+		"لرستان":              true,
+		"مازندران":            true,
+		"مرکزی":               true,
+		"هرمزگان":             true,
+		"همدان":               true,
+		"یزد":                 true,
 	}
 	return validProvinces[province]
 }
@@ -159,7 +156,7 @@ func (v *UserValidator) ValidatePhoneNumber(phone string) error {
 	if phone == "" {
 		return nil // optional field
 	}
-	
+
 	// Basic Persian phone validation
 	pattern := `^(\+98|0)9\d{9}$`
 	re := regexp.MustCompile(pattern)

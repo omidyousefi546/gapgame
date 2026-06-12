@@ -382,8 +382,6 @@ func SearchResultKeyboard(hasPrev, hasNext bool) *tele.ReplyMarkup {
 
 // }
 
-
-
 func OptionalCompletionKeyboard() *tele.ReplyMarkup {
 
 	kb := &tele.ReplyMarkup{ResizeKeyboard: true}
@@ -465,10 +463,13 @@ func ConfirmEndChatKeyboard() *tele.ReplyMarkup {
 	return menu
 }
 
-func WaitingKeyboard() *tele.ReplyMarkup {
+// SearchAgainKeyboard is shown when the 2-minute automatic search ends with
+// no match. The previously selected filter is carried in the callback data so
+// «🔁 جستجوی مجدد» re-runs the search with the exact same filters.
+func SearchAgainKeyboard(filter string) *tele.ReplyMarkup {
 	menu := &tele.ReplyMarkup{}
 	menu.Inline(
-		menu.Row(tele.Btn{Unique: "cancel_queue", Text: "❌ لغو جستجو"}),
+		menu.Row(tele.Btn{Unique: "search_again", Text: "🔁 جستجوی مجدد", Data: filter}),
 	)
 	return menu
 }
