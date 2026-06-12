@@ -580,19 +580,24 @@ func (s *UserService) IsBanned(telegramID int64) (bool, error) {
 	return s.repo.IsBanned(ctx, telegramID)
 }
 
-// ResolveTelegramID accepts either a numeric Telegram ID or a short bot ID
-// (the /user_xxx form) and resolves it to a Telegram ID.
+// ResolveTelegramID accepts only the public bot user reference (/user_xxx)
+// or the raw database user ID. It intentionally does not accept Telegram IDs:
+// Telegram IDs are internal identifiers and must never be exposed or used in
+// user-facing admin flows.
 func (s *UserService) ResolveTelegramID(ref string) (int64, error) {
 	ref = strings.TrimSpace(strings.TrimPrefix(ref, "/user_"))
-	if id, err := strconv.ParseInt(ref, 10, 64); err == nil {
-		// Numeric — could be a Telegram ID already.
-		if _, gerr := s.GetByTelegramID(id); gerr == nil {
-			return id, nil
-		}
-	}
 	u, err := s.GetByID(ref)
 	if err != nil {
 		return 0, err
 	}
 	return u.TelegramID, nil
+}
+
+// GetTelegramIDsWithCoinsBelow returns non-banned users whose balance is below
+// threshold. Admin coin notifications use this before the balance update so
+// only affected users are notified.
+func (s *UserService) GetTelegramIDsWithCoinsBelow(threshold int) ([]int64, error) {
+	ctx, cancel := utils.NewRequestContext()
+	defer cancel()
+	return s.repo.GetTelegramIDsWithCoinsBelow(ctx, threshold)
 }

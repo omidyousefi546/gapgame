@@ -91,27 +91,28 @@ func (g *GameDoozClassic) MakeMove(
 	}
 
 	markNumber := 1
-	mark := "🔵"
 
 	if player.ID == room.Player2.ID {
 		markNumber = 2
-		mark = "🔴"
 	}
 
 	g.Board[y][x] = markNumber
 	var user string
 
+	nextMark := "🔵"
 	if room.Turn == room.Player1.ID {
 		room.Turn = room.Player2.ID
 		user = room.Player2.FirstName
+		nextMark = "🔴"
 
 	} else {
 		room.Turn = room.Player1.ID
 		user = room.Player1.FirstName
+		nextMark = "🔵"
 	}
 
 	board := boardDoozClassicKeyboard(&g.Board)
-	msg := fmt.Sprintf("نوبت %v (%v)", user, mark)
+	msg := fmt.Sprintf("نوبت %v (%v)", user, nextMark)
 	b.Edit(&tele.StoredMessage{
 		MessageID: strconv.Itoa(room.MsgID1),
 		ChatID:    room.Player1.ID,

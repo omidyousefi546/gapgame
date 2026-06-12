@@ -272,14 +272,20 @@ func (h *Handler) ConfirmEndChatHandler(c tele.Context) error {
 		// Error already logged by redis manager
 	}
 
+	partnerRef := messages.ErrUserNotFound
+	if partner, perr := h.users.GetByTelegramID(partnerID); perr == nil {
+		partnerRef = userPublicRef(partner.ID)
+	}
+	meRef := userPublicRef(u.ID)
+
 	// ✅ ویرایش پیام تایید به پیام پایان چت (به‌جای ارسال پیام جدید)
-	editOrSend(c, fmt.Sprintf(messages.ChatEndedByYou, partnerID))
+	editOrSend(c, fmt.Sprintf(messages.ChatEndedByYou, partnerRef))
 	// کیبورد منوی اصلی فقط با پیام جدید قابل ارسال است.
 	h.bot.Send(&tele.User{ID: u.TelegramID}, messages.BackToMenu, MainMenuKeyboard())
 
 	// ✅ ارسال پیام به شریک چت
 	_, err = h.bot.Send(&tele.User{ID: partnerID}, fmt.Sprintf(
-		messages.ChatEndedByPartner, u.TelegramID,
+		messages.ChatEndedByPartner, meRef,
 	), MainMenuKeyboard())
 	return err
 }

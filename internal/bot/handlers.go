@@ -13,6 +13,7 @@ import (
 	"GapGame/pkg/logger"
 	"GapGame/pkg/middleware"
 
+	"sync"
 	"time"
 
 	"go.uber.org/zap"
@@ -34,6 +35,9 @@ type Handler struct {
 
 	// admins holds the Telegram IDs allowed to use admin-only commands.
 	admins map[int64]bool
+
+	adminMu      sync.Mutex
+	adminPending map[int64]*AdminPendingAction
 }
 
 var rateLimitDuration = time.Second
@@ -56,8 +60,9 @@ func New(b *tele.Bot, userService *service.UserService, sm *session.Manager, rep
 		redis:  sm,
 		db:     repo,
 		rooms:  rm,
-		log:    log,
-		admins: admins,
+		log:          log,
+		admins:       admins,
+		adminPending: make(map[int64]*AdminPendingAction),
 	}
 }
 

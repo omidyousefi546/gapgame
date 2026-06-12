@@ -437,7 +437,7 @@ func (r *Repository) GetAllTelegramIDs(ctx context.Context) ([]int64, error) {
 func (r *Repository) AddCoinsToAll(ctx context.Context, amount int) (int64, error) {
 	res := r.db.WithContext(ctx).
 		Model(&User{}).
-		Where("1 = 1").
+		Where("banned = ?", false).
 		UpdateColumn("coins", gorm.Expr("coins + ?", amount))
 	return res.RowsAffected, res.Error
 }
@@ -447,9 +447,18 @@ func (r *Repository) AddCoinsToAll(ctx context.Context, amount int) (int64, erro
 func (r *Repository) AddCoinsToPoor(ctx context.Context, amount, threshold int) (int64, error) {
 	res := r.db.WithContext(ctx).
 		Model(&User{}).
-		Where("coins < ?", threshold).
+		Where("coins < ? AND banned = ?", threshold, false).
 		UpdateColumn("coins", gorm.Expr("coins + ?", amount))
 	return res.RowsAffected, res.Error
+}
+
+func (r *Repository) GetTelegramIDsWithCoinsBelow(ctx context.Context, threshold int) ([]int64, error) {
+	var ids []int64
+	err := r.db.WithContext(ctx).
+		Model(&User{}).
+		Where("coins < ? AND banned = ?", threshold, false).
+		Pluck("telegram_id", &ids).Error
+	return ids, err
 }
 
 // SetBanned bans or unbans a user by Telegram ID.

@@ -183,8 +183,8 @@ const (
 	NoActiveChat        = "❌ چت فعالی وجود ندارد"
 	NoActiveChatShort   = "❌ چتی فعال نیست."
 	ConfirmEndChat      = "🤖 پیام سیستم 👇\n\nمطمئنی میخوای چت رو قطع کنی؟"
-	ChatEndedByYou      = "🎌 چت شما با /user_%d توسط شما پایان یافت.\nمیتونی با زدن '🚫 گزارش کاربر' در پروفایلش، تخلف رو گزارش بدی (/ghavanin)."
-	ChatEndedByPartner  = "🎌 چت شما با /user_%d توسط مخاطبت پایان یافت.\nمیتونی با زدن '🚫 گزارش کاربر' در پروفایلش، تخلف رو گزارش بدی (/ghavanin)."
+	ChatEndedByYou      = "🎌 چت شما با %s توسط شما پایان یافت.\nمیتونی با زدن '🚫 گزارش کاربر' در پروفایلش، تخلف رو گزارش بدی (/ghavanin)."
+	ChatEndedByPartner  = "🎌 چت شما با %s توسط مخاطبت پایان یافت.\nمیتونی با زدن '🚫 گزارش کاربر' در پروفایلش، تخلف رو گزارش بدی (/ghavanin)."
 	ProfileViewedNotice = "🤖 پیام سیستم 👇\n\nمخاطب شما 《 پروفایل هاید چت 》 شما را مشاهده کرد.\n\n⚠️ توجه: پروفایل هاید چت اطلاعاتی است که در بخش پروفایل ربات ثبت کرده‌اید!"
 
 	ChatRequestAccepted = "✅ درخواست چت پذیرفته شد! شروع کنید 💬"
@@ -261,9 +261,9 @@ const (
 	GameInvite         = "🎮 دعوت به بازی *%s*"
 	GameRequestDenied  = "❌ درخواست بازی رد شد."
 	GameDenied         = "رد شد."
-	GameWordTooLong    = "❌ طول کلمه باید بین ۳ تا ۶ کاراکتر باشد."
-	GameWordSet        = "✅ کلمه ثبت شد. بازی شروع شد!"
-	GameWordReady      = "🎮 حریفت کلمه رو انتخاب کرد!\n\nکلمه: %s\n\nحروف یا اعداد رو حدس بزن:"
+	GameWordTooLong    = "❌ طول ورودی باید بین ۳ تا ۱۲ کاراکتر باشد و با نوع بازی انتخاب‌شده هماهنگ باشد."
+	GameWordSet        = "✅ رمز شما ثبت شد. بعد از ثبت رمز حریف، بازی شروع می‌شود."
+	GameWordReady      = "🎮 هر دو بازیکن رمز خود را انتخاب کردند!\n\n%s"
 	GameNotInChat      = "❌ شما در چت فعالی نیستید."
 	GameYouWon         = "🎉 بردی!"
 	GameYouLost        = "💀 باختی!"
@@ -436,28 +436,34 @@ const (
 // ─── Admin ───────────────────────────────────────────────────────────────────
 
 const (
-	AdminHelp = "🛡 دستورات مدیریت:\n\n" +
-		"/broadcast <متن> — ارسال پیام همگانی به همه کاربران\n" +
-		"/give_coins_all <تعداد> — اهدای سکه به همه کاربران\n" +
-		"/give_coins_poor <تعداد> — اهدای سکه به کاربران با کمتر از ۲ سکه\n" +
-		"/ban <آیدی عددی یا /user_> — مسدود کردن کاربر\n" +
-		"/unban <آیدی عددی یا /user_> — رفع مسدودی کاربر"
+	AdminHelp = "🛡 پنل مدیریت:\n\n" +
+		"برای اجرای امن هر دستور، یکی از گزینه‌های زیر را انتخاب کنید؛ سپس ورودی لازم پرسیده می‌شود و قبل از اجرا تایید نهایی می‌گیرید.\n\n" +
+		"/broadcast — ارسال پیام همگانی\n" +
+		"/give_coins_all — اهدای سکه به همه کاربران\n" +
+		"/give_coins_poor — اهدای سکه به کاربران با کمتر از ۲ سکه\n" +
+		"/ban — مسدود کردن کاربر با /user_xxx\n" +
+		"/unban — رفع مسدودی کاربر با /user_xxx"
 
-	AdminBroadcastUsage    = "❗️ استفاده: /broadcast <متن پیام>"
+	AdminBroadcastUsage    = "✍️ متن پیام همگانی را ارسال کنید:"
 	AdminBroadcastStarted  = "📣 ارسال همگانی شروع شد برای %d کاربر..."
 	AdminBroadcastFinished = "✅ ارسال همگانی تمام شد.\nموفق: %d\nناموفق: %d"
 
-	AdminGiveCoinsUsage  = "❗️ استفاده: %s <تعداد سکه>"
+	AdminGiveCoinsUsage  = "🔢 تعداد سکه را برای %s وارد کنید:"
 	AdminCoinsGivenAll   = "✅ %d سکه به %d کاربر اضافه شد."
 	AdminCoinsGivenPoor  = "✅ %d سکه به %d کاربر (با کمتر از ۲ سکه) اضافه شد."
-	AdminBanUsage        = "❗️ استفاده: /ban <آیدی عددی یا /user_xxx>"
-	AdminUnbanUsage      = "❗️ استفاده: /unban <آیدی عددی یا /user_xxx>"
-	AdminUserBanned      = "🚫 کاربر %d مسدود شد."
-	AdminUserUnbanned    = "✅ کاربر %d رفع مسدودی شد."
+	AdminBanUsage        = "👤 شناسه کاربر را با فرمت /user_xxx ارسال کنید:"
+	AdminUnbanUsage      = "👤 شناسه کاربر را با فرمت /user_xxx ارسال کنید:"
+	AdminUserBanned      = "🚫 کاربر %s مسدود شد."
+	AdminUserUnbanned    = "✅ کاربر %s رفع مسدودی شد."
 	AdminUserNotFound    = "❌ کاربر پیدا نشد."
 	AdminInvalidAmount   = "❌ تعداد سکه نامعتبر است."
 	AdminOperationFailed = "❌ عملیات با خطا مواجه شد."
 	AdminBanNotifyUser   = "🚫 حساب کاربری شما توسط مدیریت مسدود شد."
 	AdminUnbanNotifyUser = "✅ حساب کاربری شما رفع مسدودی شد. خوش برگشتی!"
 	AdminCoinsGiftedUser = "🎁 %d سکه هدیه از طرف مدیریت دریافت کردید!"
+
+	AdminCancelled          = "❌ عملیات مدیریت لغو شد."
+	AdminNoPendingOperation = "❌ عملیات در انتظاری وجود ندارد."
+	AdminConfirmPrompt      = "⚠️ تایید نهایی عملیات:\n\n%s\n\nآیا مطمئن هستید؟"
+	AdminSendInputFirst     = "✍️ ابتدا ورودی مورد نیاز را ارسال کنید یا عملیات را لغو کنید."
 )

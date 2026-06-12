@@ -309,33 +309,47 @@ func (h *Handler) ChatGameAcceptCallback(c tele.Context) error {
 	if partnerID == c.Sender().ID {
 		partnerID = cs.User2ID
 	}
+
 	var state game_manager.GameState
 	var kb *tele.ReplyMarkup
-	var startMsg string
+	startMsg := chatGameStartMessage(gameType)
 	switch gameType {
 	case "rps":
-		state = &rps.GameRPS{}
+		state = &rps.GameRPS{Round: 1}
 		kb = boardRPSKeyboard()
-		startMsg = "🎮 سنگ کاغذ قیچی شروع شد!"
 	case "word":
 		state = &word_guess.GameWordGuess{State: word_guess.StateChoosingType}
 		kb = boardWordTypeKeyboard()
-		startMsg = "🎮 حدس کلمه شروع شد! نوع کلمه را انتخاب کنید:"
 	case "dooz4":
 		state = &dooz4.GameDooz4Normal{}
 		kb = boardDooz4Keyboard(&[7][7]int{}, "game_dooz4_normal")
-		startMsg = messages.GameDooz4Started
 	case "dooz3":
 		state = &dooz_classic.GameDoozClassic{}
 		kb = boardDoozClassicKeyboard(&[3][3]int{})
-		startMsg = messages.GameDoozClassicStarted
+	default:
+		return c.Respond(&tele.CallbackResponse{Text: messages.InvalidGame})
 	}
+
 	h.rooms.RemoveRoomsByPlayerID(c.Sender().ID)
 	h.rooms.RemoveRoomsByPlayerID(partnerID)
 	room := h.rooms.CreateRoom(c.Sender(), state)
-	h.rooms.JoinRoom(room.ID, &tele.User{ID: partnerID})
-	h.bot.Send(&tele.User{ID: partnerID}, startMsg, kb)
-	editOrSend(c, startMsg, kb)
+	room, _ = h.rooms.JoinRoom(room.ID, &tele.User{ID: partnerID})
+
+	msg1, err := h.bot.Edit(c.Message(), startMsg, kb)
+	if err != nil || msg1 == nil {
+		msg1, err = h.bot.Send(c.Sender(), startMsg, kb)
+		if err != nil {
+			return err
+		}
+	}
+	room.MsgID1 = msg1.ID
+
+	msg2, err := h.bot.Send(&tele.User{ID: partnerID}, startMsg, kb)
+	if err != nil {
+		return err
+	}
+	room.MsgID2 = msg2.ID
+
 	h.rooms.SaveRoom(room)
 	return nil
 }
@@ -353,38 +367,80 @@ func (h *Handler) moveRPSHandler(c tele.Context) error {
 		return nil
 	}
 	game := room.State.(*rps.GameRPS)
+	if game.Round == 0 {
+		game.Round = 1
+	}
 	if c.Sender().ID == room.Player1.ID {
 		if game.P1Move != "" {
-			return nil
+			return c.Respond(&tele.CallbackResponse{Text: "حرکت این راند شما ثبت شده است."})
 		}
 		game.P1Move = move
 	} else {
 		if game.P2Move != "" {
-			return nil
+			return c.Respond(&tele.CallbackResponse{Text: "حرکت این راند شما ثبت شده است."})
 		}
 		game.P2Move = move
 	}
+
 	if game.P1Move != "" && game.P2Move != "" {
-		res := determineRPSWinner(game.P1Move, game.P2Move)
-		msg := fmt.Sprintf("🏁 نتیجه:\nپ۱: %s\nپ۲: %s\n%s", rpsEmoji(game.P1Move), rpsEmoji(game.P2Move), res)
-		h.bot.Send(room.Player1, msg)
-		h.bot.Send(room.Player2, msg)
-		h.rooms.RemoveRoomByRoomID(room.ID)
-	} else {
-		c.Edit(messages.GameMoveRegistered)
+		winner := determineRPSRoundWinner(game.P1Move, game.P2Move)
+		if winner == 1 {
+			game.P1Score++
+		} else if winner == 2 {
+			game.P2Score++
+		}
+
+		p1Ref := h.playerPublicRef(room.Player1.ID)
+		p2Ref := h.playerPublicRef(room.Player2.ID)
+		roundResult := rpsRoundResultText(winner, p1Ref, p2Ref)
+		msg := fmt.Sprintf("🏁 نتیجه راند %d:\n%s: %s\n%s: %s\n%s\n\nامتیازها:\n%s: %d\n%s: %d",
+			game.Round, p1Ref, rpsEmoji(game.P1Move), p2Ref, rpsEmoji(game.P2Move), roundResult, p1Ref, game.P1Score, p2Ref, game.P2Score)
+
+		if game.P1Score >= 3 || game.P2Score >= 3 {
+			winnerRef := p1Ref
+			if game.P2Score >= 3 {
+				winnerRef = p2Ref
+			}
+			msg += fmt.Sprintf("\n\n🏆 برنده نهایی: %s\nبازی با رسیدن به ۳ امتیاز تمام شد.", winnerRef)
+			h.bot.Send(room.Player1, msg, ActiveChatKeyboard())
+			h.bot.Send(room.Player2, msg, ActiveChatKeyboard())
+			h.rooms.RemoveRoomByRoomID(room.ID)
+			return nil
+		}
+
+		game.P1Move = ""
+		game.P2Move = ""
+		game.Round++
+		msg += fmt.Sprintf("\n\n🔄 راند %d شروع شد. انتخاب بعدی را بزنید.", game.Round)
+		h.rooms.SaveRoom(room)
+		h.bot.Send(room.Player1, msg, boardRPSKeyboard())
+		h.bot.Send(room.Player2, msg, boardRPSKeyboard())
+		return nil
 	}
+
 	h.rooms.SaveRoom(room)
-	return nil
+	return c.Edit(messages.GameMoveRegistered)
 }
 
-func determineRPSWinner(p1, p2 string) string {
+func determineRPSRoundWinner(p1, p2 string) int {
 	if p1 == p2 {
-		return "🤝 مساوی!"
+		return 0
 	}
 	if map[string]string{"rock": "scissors", "paper": "rock", "scissors": "paper"}[p1] == p2 {
-		return "🎉 پ۱ برد!"
+		return 1
 	}
-	return "🎉 پ۲ برد!"
+	return 2
+}
+
+func rpsRoundResultText(winner int, p1Ref, p2Ref string) string {
+	switch winner {
+	case 1:
+		return fmt.Sprintf("🎉 %s این راند را برد!", p1Ref)
+	case 2:
+		return fmt.Sprintf("🎉 %s این راند را برد!", p2Ref)
+	default:
+		return "🤝 این راند مساوی شد."
+	}
 }
 
 func rpsEmoji(m string) string {
@@ -403,16 +459,21 @@ func (h *Handler) wordTypeHandler(c tele.Context) error {
 		return nil
 	}
 	game := room.State.(*word_guess.GameWordGuess)
+	if game.State != word_guess.StateChoosingType {
+		return c.Respond(&tele.CallbackResponse{Text: "نوع بازی قبلاً انتخاب شده است."})
+	}
 	game.Type = c.Callback().Data
-	game.State = word_guess.StateWaitingForWord
+	game.State = word_guess.StateWaitingSecrets
 	game.CreatorID = c.Sender().ID
+	game.CurrentTurn = room.Player1.ID
+
+	prompt := wordSecretPrompt(game.Type)
+	h.bot.Edit(c.Message(), prompt)
 	partnerID := room.Player1.ID
 	if partnerID == c.Sender().ID {
 		partnerID = room.Player2.ID
 	}
-	game.GuesserID = partnerID
-	h.bot.Edit(c.Message(), "✅ کلمه را بنویس (۳-۶ حرف):")
-	h.bot.Send(&tele.User{ID: partnerID}, "منتظر حریف...")
+	h.bot.Send(&tele.User{ID: partnerID}, prompt)
 	h.rooms.SaveRoom(room)
 	return nil
 }
@@ -424,55 +485,49 @@ func (h *Handler) wordGuessMoveHandler(c tele.Context) error {
 		return nil
 	}
 	game := room.State.(*word_guess.GameWordGuess)
-	if c.Sender().ID != game.GuesserID || strings.Contains(game.DisplayWord, char) {
-		return nil
+	if game.Type == "num" {
+		return c.Respond(&tele.CallbackResponse{Text: "در حالت عددی، حدس را به صورت پیام متنی ارسال کنید."})
 	}
-	for _, w := range game.WrongGuesses {
-		if w == char {
-			return nil
-		}
+	if game.State != word_guess.StatePlaying {
+		return c.Respond(&tele.CallbackResponse{Text: "بازی هنوز آماده نیست."})
 	}
-	found := false
-	newDisplay := ""
-	for _, r := range []rune(game.TargetWord) {
-		if string(r) == char || strings.Contains(game.DisplayWord, string(r)) {
-			newDisplay += string(r) + " "
-			if string(r) == char {
-				found = true
-			}
-		} else {
-			newDisplay += "_ "
-		}
+	if c.Sender().ID != game.CurrentTurn {
+		return c.Respond(&tele.CallbackResponse{Text: "نوبت شما نیست!"})
 	}
-	game.DisplayWord = strings.TrimSpace(newDisplay)
+	if alreadyWordGuessed(game, c.Sender().ID, char, room) {
+		return c.Respond(&tele.CallbackResponse{Text: "این حرف قبلاً انتخاب شده است."})
+	}
+
+	found := applyWordLetterGuess(game, c.Sender().ID, char, room)
 	if !found {
-		game.WrongGuesses = append(game.WrongGuesses, char)
-		game.MaxTries--
+		c.Respond(&tele.CallbackResponse{Text: "این حرف در کلمه حریف نیست."})
+	} else {
+		c.Respond(&tele.CallbackResponse{Text: "درست بود!"})
 	}
+
+	if wordPlayerHasWon(game, c.Sender().ID, room) {
+		winnerRef := h.playerPublicRef(c.Sender().ID)
+		loser := room.Player1
+		if c.Sender().ID == room.Player1.ID {
+			loser = room.Player2
+		}
+		h.bot.Send(c.Sender(), fmt.Sprintf("🎉 تبریک! کلمه حریف را کامل حدس زدی و برنده شدی.\nبرنده: %s", winnerRef), ActiveChatKeyboard())
+		h.bot.Send(loser, fmt.Sprintf("💀 حریف کلمه شما را کامل حدس زد.\nبرنده: %s", winnerRef), ActiveChatKeyboard())
+		h.rooms.RemoveRoomByRoomID(room.ID)
+		return nil
+	}
+
+	switchWordTurn(game, room)
 	h.rooms.SaveRoom(room)
-	partnerID := room.Player1.ID
-	if partnerID == c.Sender().ID {
-		partnerID = room.Player2.ID
-	}
-	if !strings.Contains(game.DisplayWord, "_") {
-		h.bot.Send(c.Sender(), messages.GameYouWon)
-		h.bot.Send(&tele.User{ID: partnerID}, messages.GameYouLost)
-		h.rooms.RemoveRoomByRoomID(room.ID)
-		return nil
-	}
-	if game.MaxTries <= 0 {
-		h.bot.Send(c.Sender(), messages.GameYouLost)
-		h.bot.Send(&tele.User{ID: partnerID}, messages.GameYouWon)
-		h.rooms.RemoveRoomByRoomID(room.ID)
-		return nil
-	}
-	msg := fmt.Sprintf("کلمه: %s\nفرصت: %d\nخطاها: %s", game.DisplayWord, game.MaxTries, strings.Join(game.WrongGuesses, ","))
-	c.Edit(msg, boardWordGuessKeyboard(game))
-	h.bot.Send(&tele.User{ID: partnerID}, msg)
+	h.sendWordGameStatus(room, game)
 	return nil
 }
 
 func boardWordGuessKeyboard(game *word_guess.GameWordGuess) *tele.ReplyMarkup {
+	return boardWordGuessKeyboardFor(game, 0, nil)
+}
+
+func boardWordGuessKeyboardFor(game *word_guess.GameWordGuess, playerID int64, room *game_manager.Room) *tele.ReplyMarkup {
 	m := &tele.ReplyMarkup{}
 	var chars []string
 	if game.Type == "fa" {
@@ -482,16 +537,29 @@ func boardWordGuessKeyboard(game *word_guess.GameWordGuess) *tele.ReplyMarkup {
 	} else {
 		chars = []string{"0", "1", "2", "3", "4", "5", "6", "7", "8", "9"}
 	}
+
+	wrong := game.WrongGuesses
+	display := game.DisplayWord
+	if room != nil && playerID != 0 {
+		if playerID == room.Player1.ID {
+			wrong = game.P1Wrong
+			display = game.P1Display
+		} else {
+			wrong = game.P2Wrong
+			display = game.P2Display
+		}
+	}
+
 	var rows []tele.Row
 	var cur tele.Row
-	for i, c := range chars {
-		lbl := c
-		for _, w := range game.WrongGuesses {
-			if w == c {
-				lbl = "✖️"
-			}
+	for i, ch := range chars {
+		lbl := ch
+		if containsString(wrong, ch) {
+			lbl = "✖️"
+		} else if displayContainsLetter(display, ch) {
+			lbl = "✅ " + ch
 		}
-		cur = append(cur, m.Data(lbl, "word_guess", c))
+		cur = append(cur, m.Data(lbl, "word_guess", ch))
 		if (i+1)%7 == 0 || i == len(chars)-1 {
 			rows = append(rows, cur)
 			cur = tele.Row{}
@@ -499,4 +567,341 @@ func boardWordGuessKeyboard(game *word_guess.GameWordGuess) *tele.ReplyMarkup {
 	}
 	m.Inline(rows...)
 	return m
+}
+
+func chatGameStartMessage(gameType string) string {
+	switch gameType {
+	case "rps":
+		return "🎮 سنگ، کاغذ، قیچی شروع شد!\n\n" +
+			"روش بازی:\n" +
+			"• هر دو بازیکن در هر راند یکی از سنگ، کاغذ یا قیچی را انتخاب می‌کنند.\n" +
+			"• سنگ قیچی را می‌برد، قیچی کاغذ را می‌برد، کاغذ سنگ را می‌برد.\n" +
+			"• بازی چند راندی است و اولین بازیکنی که به ۳ امتیاز برسد فوراً برنده نهایی می‌شود.\n\n" +
+			"انتخاب راند اول را بزنید 👇"
+	case "word":
+		return "🎮 بازی حدس کلمه/عدد شروع شد!\n\n" +
+			"روش بازی:\n" +
+			"• ابتدا نوع بازی را انتخاب کنید: کلمه فارسی، کلمه انگلیسی یا عدد.\n" +
+			"• سپس هر دو بازیکن باید رمز خود را به صورت پیام متنی برای ربات بفرستند. رمزها برای حریف نمایش داده نمی‌شود.\n" +
+			"• در حالت عددی، بازیکنان نوبتی حدس کامل می‌فرستند و سیستم رقم‌های درست در جای درست را اعلام می‌کند.\n" +
+			"• در حالت کلمه، با کیبورد حروف بازی می‌کنید؛ حرف درست در جای خودش آشکار و حرف اشتباه علامت‌گذاری می‌شود.\n" +
+			"• نوبت‌ها ادامه دارد تا یکی رمز حریف را کامل حدس بزند.\n\n" +
+			"نوع بازی را انتخاب کنید 👇"
+	case "dooz4":
+		return messages.GameDooz4Started
+	case "dooz3":
+		return messages.GameDoozClassicStarted
+	default:
+		return "🎮 بازی شروع شد!"
+	}
+}
+
+func wordSecretPrompt(gameType string) string {
+	switch gameType {
+	case "num":
+		return "🔐 هر دو بازیکن باید عدد مخفی خود را ارسال کنند.\n\nقوانین:\n• عدد باید ۳ تا ۱۲ رقم باشد.\n• بعد از ثبت هر دو عدد، نوبت‌ها شروع می‌شود.\n• در نوبت خود حدس کامل را به صورت پیام متنی بفرستید."
+	case "fa":
+		return "🔐 هر دو بازیکن باید کلمه فارسی مخفی خود را ارسال کنند.\n\nقوانین:\n• کلمه باید ۳ تا ۱۲ حرف فارسی باشد.\n• بعد از ثبت هر دو کلمه، کیبورد حروف نمایش داده می‌شود.\n• در نوبت خود یک حرف را انتخاب کنید."
+	case "en":
+		return "🔐 هر دو بازیکن باید کلمه انگلیسی مخفی خود را ارسال کنند.\n\nقوانین:\n• کلمه باید ۳ تا ۱۲ حرف انگلیسی باشد.\n• بعد از ثبت هر دو کلمه، کیبورد حروف نمایش داده می‌شود.\n• در نوبت خود یک حرف را انتخاب کنید."
+	default:
+		return "🔐 رمز مخفی خود را ارسال کنید."
+	}
+}
+
+func (h *Handler) handleWordGameText(c tele.Context, room *game_manager.Room, game *word_guess.GameWordGuess, text string) (bool, error) {
+	if game.State == word_guess.StateWaitingForWord {
+		game.State = word_guess.StateWaitingSecrets
+	}
+	if game.State == word_guess.StateWaitingSecrets {
+		return true, h.handleWordSecretInput(c, room, game, text)
+	}
+	if game.State == word_guess.StatePlaying && game.Type == "num" {
+		return true, h.handleNumberGuessInput(c, room, game, text)
+	}
+	return false, nil
+}
+
+func (h *Handler) handleWordSecretInput(c tele.Context, room *game_manager.Room, game *word_guess.GameWordGuess, text string) error {
+	secret := normalizeSecretInput(game.Type, text)
+	if !isValidSecretForType(game.Type, secret) {
+		return editOrSend(c, messages.GameWordTooLong)
+	}
+	if c.Sender().ID == room.Player1.ID {
+		if game.P1Ready {
+			return editOrSend(c, "✅ رمز شما قبلاً ثبت شده است. منتظر حریف بمانید.")
+		}
+		game.P1Secret = secret
+		game.P1Ready = true
+	} else {
+		if game.P2Ready {
+			return editOrSend(c, "✅ رمز شما قبلاً ثبت شده است. منتظر حریف بمانید.")
+		}
+		game.P2Secret = secret
+		game.P2Ready = true
+	}
+	h.rooms.SaveRoom(room)
+	h.bot.Send(c.Sender(), messages.GameWordSet)
+
+	if game.P1Ready && game.P2Ready {
+		game.State = word_guess.StatePlaying
+		game.CurrentTurn = room.Player1.ID
+		game.P1Display = hiddenDisplay(game.P2Secret)
+		game.P2Display = hiddenDisplay(game.P1Secret)
+		h.rooms.SaveRoom(room)
+		h.sendWordGameStatus(room, game)
+	} else {
+		opponent := room.Player1
+		if c.Sender().ID == room.Player1.ID {
+			opponent = room.Player2
+		}
+		h.bot.Send(opponent, "✅ حریف رمز خود را ثبت کرد. منتظر ثبت رمز شما هستیم.")
+	}
+	return nil
+}
+
+func (h *Handler) handleNumberGuessInput(c tele.Context, room *game_manager.Room, game *word_guess.GameWordGuess, text string) error {
+	if c.Sender().ID != game.CurrentTurn {
+		return editOrSend(c, "⏳ نوبت شما نیست. منتظر حدس حریف باشید.")
+	}
+	guess := normalizeSecretInput("num", text)
+	if !isValidSecretForType("num", guess) {
+		return editOrSend(c, messages.GameWordTooLong)
+	}
+	target := game.P1Secret
+	if c.Sender().ID == room.Player1.ID {
+		target = game.P2Secret
+	}
+	if len([]rune(guess)) != len([]rune(target)) {
+		return editOrSend(c, fmt.Sprintf("❌ حدس باید دقیقاً %d رقم باشد.", len([]rune(target))))
+	}
+
+	result := numberGuessResult(target, guess)
+	guessRef := h.playerPublicRef(c.Sender().ID)
+	msg := fmt.Sprintf("🔢 حدس %s: %s\n%s", guessRef, guess, result)
+	if guess == target {
+		msg += fmt.Sprintf("\n\n🏆 %s عدد حریف را کامل حدس زد و برنده شد!", guessRef)
+		h.bot.Send(room.Player1, msg, ActiveChatKeyboard())
+		h.bot.Send(room.Player2, msg, ActiveChatKeyboard())
+		h.rooms.RemoveRoomByRoomID(room.ID)
+		return nil
+	}
+	switchWordTurn(game, room)
+	h.rooms.SaveRoom(room)
+	msg += fmt.Sprintf("\n\nنوبت بعدی: %s", h.playerPublicRef(game.CurrentTurn))
+	h.bot.Send(room.Player1, msg)
+	h.bot.Send(room.Player2, msg)
+	return nil
+}
+
+func (h *Handler) sendWordGameStatus(room *game_manager.Room, game *word_guess.GameWordGuess) {
+	p1Text := h.wordStatusForPlayer(room, game, room.Player1.ID)
+	p2Text := h.wordStatusForPlayer(room, game, room.Player2.ID)
+	if game.Type == "num" {
+		if room.MsgID1 != 0 {
+			h.bot.Edit(&tele.StoredMessage{MessageID: strconv.Itoa(room.MsgID1), ChatID: room.Player1.ID}, p1Text)
+		} else if msg, err := h.bot.Send(room.Player1, p1Text); err == nil {
+			room.MsgID1 = msg.ID
+		}
+		if room.MsgID2 != 0 {
+			h.bot.Edit(&tele.StoredMessage{MessageID: strconv.Itoa(room.MsgID2), ChatID: room.Player2.ID}, p2Text)
+		} else if msg, err := h.bot.Send(room.Player2, p2Text); err == nil {
+			room.MsgID2 = msg.ID
+		}
+		h.rooms.SaveRoom(room)
+		return
+	}
+
+	kb1 := boardWordGuessKeyboardFor(game, room.Player1.ID, room)
+	kb2 := boardWordGuessKeyboardFor(game, room.Player2.ID, room)
+	if room.MsgID1 != 0 {
+		h.bot.Edit(&tele.StoredMessage{MessageID: strconv.Itoa(room.MsgID1), ChatID: room.Player1.ID}, p1Text, kb1)
+	} else if msg, err := h.bot.Send(room.Player1, p1Text, kb1); err == nil {
+		room.MsgID1 = msg.ID
+	}
+	if room.MsgID2 != 0 {
+		h.bot.Edit(&tele.StoredMessage{MessageID: strconv.Itoa(room.MsgID2), ChatID: room.Player2.ID}, p2Text, kb2)
+	} else if msg, err := h.bot.Send(room.Player2, p2Text, kb2); err == nil {
+		room.MsgID2 = msg.ID
+	}
+	h.rooms.SaveRoom(room)
+}
+
+func (h *Handler) wordStatusForPlayer(room *game_manager.Room, game *word_guess.GameWordGuess, playerID int64) string {
+	if game.Type == "num" {
+		return fmt.Sprintf(messages.GameWordReady, fmt.Sprintf("🔢 حالت عددی\nطول عدد حریف: %d رقم\nنوبت فعلی: %s\n\nدر نوبت خود حدس کامل را به صورت پیام متنی ارسال کنید.", opponentSecretLen(room, game, playerID), h.playerPublicRef(game.CurrentTurn)))
+	}
+	display := game.P1Display
+	wrong := game.P1Wrong
+	if playerID == room.Player2.ID {
+		display = game.P2Display
+		wrong = game.P2Wrong
+	}
+	wrongText := "ندارد"
+	if len(wrong) > 0 {
+		wrongText = strings.Join(wrong, "، ")
+	}
+	body := fmt.Sprintf("کلمه حریف: %s\nحروف اشتباه شما: %s\nنوبت فعلی: %s\n\nاگر نوبت شماست، یک حرف انتخاب کنید.", display, wrongText, h.playerPublicRef(game.CurrentTurn))
+	return fmt.Sprintf(messages.GameWordReady, body)
+}
+
+func opponentSecretLen(room *game_manager.Room, game *word_guess.GameWordGuess, playerID int64) int {
+	if playerID == room.Player1.ID {
+		return len([]rune(game.P2Secret))
+	}
+	return len([]rune(game.P1Secret))
+}
+
+func switchWordTurn(game *word_guess.GameWordGuess, room *game_manager.Room) {
+	if game.CurrentTurn == room.Player1.ID {
+		game.CurrentTurn = room.Player2.ID
+	} else {
+		game.CurrentTurn = room.Player1.ID
+	}
+}
+
+func alreadyWordGuessed(game *word_guess.GameWordGuess, playerID int64, char string, room *game_manager.Room) bool {
+	display := game.P1Display
+	wrong := game.P1Wrong
+	if playerID == room.Player2.ID {
+		display = game.P2Display
+		wrong = game.P2Wrong
+	}
+	return displayContainsLetter(display, char) || containsString(wrong, char)
+}
+
+func applyWordLetterGuess(game *word_guess.GameWordGuess, playerID int64, char string, room *game_manager.Room) bool {
+	target := game.P2Secret
+	display := game.P1Display
+	wrong := game.P1Wrong
+	isP1 := playerID == room.Player1.ID
+	if !isP1 {
+		target = game.P1Secret
+		display = game.P2Display
+		wrong = game.P2Wrong
+	}
+
+	found := false
+	displayRunes := displaySlots(display)
+	targetRunes := []rune(target)
+	for i, r := range targetRunes {
+		if string(r) == char {
+			displayRunes[i] = string(r)
+			found = true
+		}
+	}
+	if !found {
+		wrong = append(wrong, char)
+	}
+	newDisplay := strings.Join(displayRunes, " ")
+	if isP1 {
+		game.P1Display = newDisplay
+		game.P1Wrong = wrong
+	} else {
+		game.P2Display = newDisplay
+		game.P2Wrong = wrong
+	}
+	return found
+}
+
+func wordPlayerHasWon(game *word_guess.GameWordGuess, playerID int64, room *game_manager.Room) bool {
+	if playerID == room.Player1.ID {
+		return !strings.Contains(game.P1Display, "_")
+	}
+	return !strings.Contains(game.P2Display, "_")
+}
+
+func hiddenDisplay(secret string) string {
+	parts := make([]string, 0, len([]rune(secret)))
+	for range []rune(secret) {
+		parts = append(parts, "_")
+	}
+	return strings.Join(parts, " ")
+}
+
+func displaySlots(display string) []string {
+	parts := strings.Fields(display)
+	if len(parts) == 0 {
+		return []string{}
+	}
+	return parts
+}
+
+func displayContainsLetter(display, char string) bool {
+	for _, part := range strings.Fields(display) {
+		if part == char {
+			return true
+		}
+	}
+	return false
+}
+
+func normalizeSecretInput(gameType, text string) string {
+	text = strings.TrimSpace(text)
+	if gameType == "en" || gameType == "num" {
+		text = strings.ToLower(text)
+	}
+	return text
+}
+
+func isValidSecretForType(gameType, text string) bool {
+	l := len([]rune(text))
+	if l < 3 || l > 12 || strings.Contains(text, " ") {
+		return false
+	}
+	for _, r := range text {
+		switch gameType {
+		case "num":
+			if r < '0' || r > '9' {
+				return false
+			}
+		case "en":
+			if r < 'a' || r > 'z' {
+				return false
+			}
+		case "fa":
+			if !((r >= 0x0600 && r <= 0x06FF) || r == 'آ') {
+				return false
+			}
+		default:
+			return false
+		}
+	}
+	return true
+}
+
+func numberGuessResult(target, guess string) string {
+	targetRunes := []rune(target)
+	guessRunes := []rune(guess)
+	var correct []string
+	pattern := make([]string, len(targetRunes))
+	for i := range pattern {
+		pattern[i] = "_"
+	}
+	for i := 0; i < len(targetRunes) && i < len(guessRunes); i++ {
+		if targetRunes[i] == guessRunes[i] {
+			pattern[i] = string(guessRunes[i])
+			correct = append(correct, fmt.Sprintf("%s (خانه %d)", string(guessRunes[i]), i+1))
+		}
+	}
+	if len(correct) == 0 {
+		return fmt.Sprintf("❌ هیچ رقمی در جای درست نیست.\nالگو: %s", strings.Join(pattern, " "))
+	}
+	return fmt.Sprintf("✅ رقم‌های درست در جای درست: %s\nالگو: %s", strings.Join(correct, "، "), strings.Join(pattern, " "))
+}
+
+func containsString(items []string, value string) bool {
+	for _, item := range items {
+		if item == value {
+			return true
+		}
+	}
+	return false
+}
+
+func (h *Handler) playerPublicRef(telegramID int64) string {
+	if u, err := h.users.GetByTelegramID(telegramID); err == nil {
+		return userPublicRef(u.ID)
+	}
+	return "/user_unknown"
 }

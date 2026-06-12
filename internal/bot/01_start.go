@@ -65,6 +65,10 @@ func (h *Handler) TextHandler(c tele.Context) error {
 
 	text := strings.TrimSpace(c.Text())
 
+	if handled, err := h.handleAdminTextInput(c, text); handled {
+		return err
+	}
+
 	// see user_ profile
 
 	if strings.HasPrefix(text, "/user_") {
@@ -124,33 +128,14 @@ func (h *Handler) TextHandler(c tele.Context) error {
 	ctx, cancel := utils.NewRequestContext()
 	defer cancel()
 	if cs, err := h.redis.GetActiveChat(ctx, u.TelegramID); err == nil && cs != nil {
-		// بازی حدس کلمه - چک کردن اینکه آیا کاربر باید کلمه را تعیین کند
+		// In-chat word/number guessing game messages must be handled by the
+		// game system first so secrets and numeric guesses are not forwarded to
+		// the anonymous chat partner.
 		room := h.rooms.GetRoomByPlayerID(u.TelegramID)
 		if room != nil {
 			if game, ok := room.State.(*word_guess.GameWordGuess); ok {
-				if game.State == word_guess.StateWaitingForWord && game.CreatorID == u.TelegramID {
-					word := strings.ToLower(strings.TrimSpace(text))
-					if len([]rune(word)) < 3 || len([]rune(word)) > 6 {
-						return editOrSend(c, messages.GameWordTooLong)
-					}
-
-					game.TargetWord = word
-					display := ""
-					for range []rune(word) {
-						display += "_ "
-					}
-					game.DisplayWord = strings.TrimSpace(display)
-					game.State = word_guess.StatePlaying
-					game.MaxTries = 6
-
-					h.rooms.SaveRoom(room)
-
-					h.bot.Send(c.Sender(), messages.GameWordSet)
-
-					msg := fmt.Sprintf(messages.GameWordReady, game.DisplayWord)
-					kb := boardWordGuessKeyboard(game)
-					h.bot.Send(&tele.User{ID: game.GuesserID}, msg, kb)
-					return nil
+				if handled, err := h.handleWordGameText(c, room, game, text); handled {
+					return err
 				}
 			}
 		}
